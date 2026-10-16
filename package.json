@@ -1,0 +1,26 @@
+{
+  "name": "jev-docs",
+  "version": "0.1.0",
+  "description": "Claude Code hook that uses Jev (TypeSafe) to pick the documentation pages relevant to each prompt.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "install-hook": "node install.mjs",
+    "uninstall-hook": "node install.mjs --uninstall",
+    "dry-run": "node hook.mjs --dry-run",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.7.0"
+  },
+  "keywords": [
+    "claude-code",
+    "hook",
+    "documentation",
+    "jev",
+    "typesafe"
+  ]
+}
