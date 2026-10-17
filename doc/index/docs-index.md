@@ -68,4 +68,4 @@ Otherwise the index is rebuilt and written back. Read and write failures are swa
 - `buildIndex`, against a fixture with `cache: false`: skipping `_archive`, `history`, `.prompt.md` files and a `.jevdocsignore` entry
 - description precedence: frontmatter first, then hub links, including the area summary taking its README's hub description
 
-The cache path, the signature and the topic ordering in area summaries have no automated test. The suite was run while writing this page: 13 tests, all passing.
+The cache path, the signature and the topic ordering in area summaries have no automated test. The suite was run while writing this page: 21 tests, all passing.

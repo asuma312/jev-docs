@@ -4,7 +4,7 @@
 
 ## Pages
 
-- [Installer](installer.md): flags, settings.json backup and rewrite, the two hook entries and how they're recognized on reinstall, skill copy targets and ownership check, uninstall, npm scripts, and the known path-name limitation.
+- [Installer](installer.md): flags, settings.json backup and rewrite, the two hook entries and how they're recognized by package name on reinstall, skill copy targets and ownership check, uninstall, and npm scripts.
 
 ## Ownership
 

@@ -21,11 +21,19 @@ The skill instructs the agent to:
 - name the tests that cover a behavior, and claim a verification only if the agent ran it
 - change no code. Bugs it finds go in the report.
 - check `git status`, and in update mode change only the affected passages
+- restructure the docs only after the user explicitly approves, keeping the facts of every page
 - copy no secrets into docs
 
 ## Mode detection
 
-The agent starts with `doc-coverage.mjs inventory`. It reports `mode: create` when there is no `doc`, `docs` or `documentation` folder, or when the folder has no `.md` page. It reports `mode: update` otherwise. A request limited to one area limits every later step to that area.
+The skill has three modes, chosen from two helper runs:
+
+1. `doc-coverage.mjs inventory` reports `mode: create` when there is no `doc`, `docs` or `documentation` folder, or when the folder has no `.md` page. That leads to the create workflow.
+2. Otherwise, the agent runs `check` and reads its [layout verdict](doc-coverage.md#commands):
+   - `follows the create-jev-doc format`: update workflow
+   - `does NOT follow`: restructure workflow, which starts by asking the user
+
+A request limited to one area limits every later step to that area.
 
 ## Create workflow
 
@@ -36,15 +44,27 @@ The agent starts with `doc-coverage.mjs inventory`. It reports `mode: create` wh
 5. **Close the loop** with `map`: document, exclude or report each undocumented file. Then link every domain from the root hub. If an existing agent instruction file has a documentation section, add the hubs there. The skill doesn't create such a file without asking.
 6. **Stamp** with `stamp`, and tell the user that the stamp covers committed code only.
 
+## Restructure workflow
+
+This workflow brings existing docs that don't follow the format into it, so that `check` reports `follows the create-jev-doc format` with no broken links.
+
+1. **Explain and ask.** The agent lists the failed layout rules. It asks whether it may restructure, which means moving, renaming, splitting or merging pages, adding hubs and rewriting links. It also offers to leave the layout alone and update content only. Nothing moves before a yes.
+2. **Plan.** The agent reads every page, groups the pages into domains, and shows a mapping table: old path → new path, with an action of keep, split, merge or archive. Plans, reports, dated notes and superseded material go to `_archive/`, and tool output to `_generated/`. It waits for approval.
+3. **Move** with `git mv`, so history follows the files. Splits and merges are edits to the moved files, and they keep the facts.
+4. **Write the hubs**: the root `README.md` and one per domain, with a description line for every page, and `.jev-doc.json` with `exclude` and `plan`.
+5. **Fix every link**: between pages, to sources, and from outside the docs folder.
+6. **Verify**: `check` until the layout conforms with no broken links or orphans, then `map`. Coverage must not drop compared with before the restructure.
+7. **Continue** with the update workflow. When there is no stamp, the agent reviews each domain against its sources, then stamps.
+
+If the user declines, the agent updates content in place, lists every page it adds or touches in a hub, and reports what `check` still flags.
+
 ## Update workflow
 
 1. Run `changed` to get the pages to update, the new files without a page, the modified files no page references, and the deleted or renamed files still referenced.
 2. For each listed page, read the diff since the baseline and the current code, then rewrite only the facts that changed.
 3. Place new files on an existing page or a new one, and list any new page in a hub.
 4. Fix renamed paths. Remove claims about deleted files, or move fully obsolete pages to `_archive/`.
-5. Run `check`, fix what it reports, then run `stamp`.
-
-Docs that don't follow the skill's layout are updated in place, not restructured, unless the user asks.
+5. Run `check`, fix what it reports, confirm the layout still conforms, then run `stamp`.
 
 ## The state file
 
@@ -74,7 +94,8 @@ It also sets the hub-line format `- [Title](page.md): what it covers` as the mos
 ## Limits
 
 - The workflows are instructions to an agent, not code. Whether an agent follows them, for example by waiting for plan approval, depends on the agent.
-- Nothing in the skill enforces page length or style. `check` only verifies structure: links, hubs and titles.
+- Nothing in the skill enforces page length or style. `check` only verifies structure: the layout rules, links, hubs and titles.
+- The layout verdict is structural. A docs folder can conform and still contain outdated or vague pages.
 
 ## Verification
 

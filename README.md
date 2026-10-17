@@ -118,10 +118,13 @@ A project with about 950 Markdown pages in 24 areas:
 
 The hook is only as good as the docs it picks from. `create-jev-doc` writes those docs from the code. Invoke it with `/create-jev-doc` in Claude Code or `$create-jev-doc` in Codex, or just ask the agent to document the repository.
 
-It picks one of two modes automatically:
+It picks one of three modes automatically:
 
-- **Create:** when the repository has no docs folder. The agent surveys the code, proposes a set of domains and waits for your approval. It then writes `doc/README.md`, one hub per domain and the pages, one domain at a time. It records progress so a later session can resume.
-- **Update:** when the docs folder exists. The agent finds the source files that changed since the last documented commit and the pages that reference them, then rewrites only the affected passages. It also adds new files to the right pages, fixes links to renamed or deleted files, and records the new commit.
+- **Create:** when the repository has no docs folder, or it is empty. The agent surveys the code, proposes a set of domains and waits for your approval. It then writes `doc/README.md`, one hub per domain and the pages, one domain at a time. It records progress so a later session can resume.
+- **Restructure:** when docs exist but don't follow the format, for example pages sitting at the root with no domains or hubs. The agent shows what doesn't conform and asks before changing anything. If you agree, it proposes an old → new path mapping, moves pages with `git mv`, writes the hubs and fixes every link, until `check` confirms the format. If you decline, it only updates content in place.
+- **Update:** when the docs follow the format. The agent finds the source files that changed since the last documented commit and the pages that reference them, then rewrites only the affected passages. It also adds new files to the right pages, fixes links to renamed or deleted files, and records the new commit.
+
+The choice comes from the helper below. `inventory` tells create apart from the other two modes, and the layout verdict of `check` decides between restructure and update.
 
 The pages follow a fixed style, described in [`skills/create-jev-doc/references/style.md`](skills/create-jev-doc/references/style.md):
 
@@ -141,7 +144,7 @@ node skills/create-jev-doc/scripts/doc-coverage.mjs <command> [--root <repo>] [-
 | `inventory` | Source areas with file and line counts, the docs folder, and the mode (create or update) |
 | `map` | Which pages reference which source files, the coverage percentage, and the undocumented files |
 | `changed` | Source changes since the last documented commit: pages to update, new files, broken references |
-| `check` | Broken links, pages no hub lists, folders without a README hub, hub lines without descriptions |
+| `check` | Whether the layout follows the format (root hub, domain folders with hubs, every page listed with a description), then broken links, orphan pages, folders without a hub and missing titles |
 | `stamp` | Records HEAD as the documented commit in `doc/.jev-doc.json` |
 
 `doc/.jev-doc.json` also accepts an `exclude` list of repository paths (build output, generated reports, fixtures) that should not count as source.

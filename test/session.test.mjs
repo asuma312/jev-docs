@@ -71,3 +71,25 @@ test("install registers both hooks once and uninstall removes them", () => {
   run("--uninstall");
   assert.deepEqual(settings().hooks, { UserPromptSubmit: [{ hooks: [other] }] });
 });
+
+test("install recognizes its hooks from a clone in a folder with another name", () => {
+  // No "jev-docs" anywhere in these paths, so only the package.json check can recognize the hooks.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "home-"));
+  const clone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "clone-")), "docs-hook");
+  fs.mkdirSync(clone);
+  for (const f of ["install.mjs", "package.json", "hook.mjs"]) fs.copyFileSync(path.join(repoDir, f), path.join(clone, f));
+  // A different tool's hook.mjs, with no jev-docs package.json next to it, must be left alone.
+  const foreign = { type: "command", command: `node "${path.join(home, "other-tool").split(path.sep).join("/")}/hook.mjs"` };
+  fs.mkdirSync(path.join(home, ".claude"));
+  fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [foreign] }] } }));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const run = (...a) => execFileSync("node", [path.join(clone, "install.mjs"), "--no-skill", ...a], { env });
+  const settings = () => JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+
+  run();
+  run();
+  assert.equal(settings().hooks.UserPromptSubmit.length, 2);
+  assert.equal(settings().hooks.SessionStart.length, 1);
+  run("--uninstall");
+  assert.deepEqual(settings().hooks, { UserPromptSubmit: [{ hooks: [foreign] }] });
+});

@@ -144,7 +144,35 @@ const isHistorical = (rel) => /(^|\/)(_archive|_generated|archive|history)(\/|$)
 // ---------------------------------------------------------------- references
 
 const LINK_RE = /\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-const PATH_TOKEN_RE = /[`'"(\s]((?:\.{1,2}\/)*[\w@.\-]+(?:\/[\w@.\-]+)+\.[A-Za-z0-9]+)(?=[`'")\s:,;.]|$)/g;
+const PATH_TOKEN_RE = /[`'"(\s]((?:\.{1,2}\/)*[\p{L}\p{N}_@.\-]+(?:\/[\p{L}\p{N}_@.\-]+)+\.[\p{L}\p{N}]+)(?=[`'")\s:,;.]|$)/gu;
+// A whole inline code span can name a file with spaces, e.g. `src/old name.js`.
+const INLINE_CODE_RE = /`([^`\n]+)`/g;
+
+// Text with fenced code blocks emptied and inline code spans replaced by a word, so that
+// example links shown as code aren't read as links. "[`file.js`](path)" keeps its link.
+function withoutCode(text) {
+  const out = [];
+  let fence = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      out.push("");
+    } else if (m) {
+      fence = m[1];
+      out.push("");
+    } else out.push(line.replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, "code"));
+  }
+  return out.join("\n");
+}
+
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
 
 function referencesOf(abs, fileSet) {
   const text = fs.readFileSync(abs, "utf8");
@@ -153,7 +181,7 @@ function referencesOf(abs, fileSet) {
   const links = [];
   const consider = (raw, fromLink) => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("#")) return;
-    const clean = decodeURIComponent(raw.split("#")[0].split("?")[0]);
+    const clean = safeDecode(raw.split("#")[0].split("?")[0]);
     if (!clean) return;
     const viaPage = toPosix(path.relative(root, path.resolve(dir, clean)));
     const viaRoot = clean.replace(/^\.?\//, "");
@@ -162,8 +190,11 @@ function referencesOf(abs, fileSet) {
     else if (!fromLink && fileSet.has(viaRoot)) refs.add(viaRoot);
   };
   let m;
-  while ((m = LINK_RE.exec(text))) consider(m[1], true);
+  // Links only outside code; path tokens anywhere, since files are usually named in backticks.
+  const prose = withoutCode(text);
+  while ((m = LINK_RE.exec(prose))) consider(m[1], true);
   while ((m = PATH_TOKEN_RE.exec(` ${text}`))) consider(m[1], false);
+  while ((m = INLINE_CODE_RE.exec(text))) if (m[1].includes("/")) consider(m[1].trim(), false);
   return { refs, links, text };
 }
 
@@ -281,20 +312,33 @@ function cmdChanged() {
 
   const changes = new Map();
   const add = (status, file, oldFile) => changes.set(file, { status, file, oldFile });
-  for (const line of (git(["diff", "--name-status", "-M", since, "HEAD"], root) || "").split("\n").filter(Boolean)) {
-    const [st, a, b] = line.split("\t");
-    if (st.startsWith("R")) add("R", b, a);
-    else add(st[0], a);
+  // -z keeps paths unquoted (spaces, accents), so they match the ls-files names.
+  // diff: "<status>\0<path>\0", or "R<score>\0<old>\0<new>\0" for renames and copies.
+  const diffFields = (git(["diff", "--name-status", "-z", "-M", since, "HEAD"], root) || "").split("\0");
+  for (let i = 0; i < diffFields.length - 1; ) {
+    const st = diffFields[i++];
+    if (!st) continue;
+    if (st[0] === "R" || st[0] === "C") {
+      const from = diffFields[i++];
+      const to = diffFields[i++];
+      if (st[0] === "R") add("R", to, from);
+      else add("A", to);
+    } else add(st[0], diffFields[i++]);
   }
-  for (const line of (git(["status", "--porcelain", "-uall"], root) || "").split("\n").filter(Boolean)) {
-    const st = line.slice(0, 2);
-    const rest = line.slice(3);
-    if (rest.includes(" -> ")) {
-      const [a, b] = rest.split(" -> ");
-      add("R", b, a);
-    } else if (st.includes("D")) add("D", rest);
-    else if (st === "??" || st.includes("A")) add(changes.get(rest)?.status === "M" ? "M" : "A", rest);
-    else if (!changes.has(rest)) add("M", rest);
+  // status: "XY <path>\0", or "XY <new>\0<old>\0" for renames and copies.
+  const statusFields = (git(["status", "--porcelain", "-z", "-uall"], root) || "").split("\0");
+  for (let i = 0; i < statusFields.length; i++) {
+    const entry = statusFields[i];
+    if (entry.length < 4) continue;
+    const st = entry.slice(0, 2);
+    const file = entry.slice(3);
+    if (st.includes("R") || st.includes("C")) {
+      const from = statusFields[++i];
+      if (st.includes("R")) add("R", file, from);
+      else add("A", file);
+    } else if (st.includes("D")) add("D", file);
+    else if (st === "??" || st.includes("A")) add(changes.get(file)?.status === "M" ? "M" : "A", file);
+    else if (!changes.has(file)) add("M", file);
   }
 
   const sources = allRepoFiles().filter(isSource);
@@ -348,9 +392,11 @@ function cmdCheck() {
   const allFiles = new Set(allRepoFiles());
   for (const p of pages) allFiles.add(pageRel(p));
   const linkedPages = new Set();
+  const hubLinked = new Set();
   const broken = [];
   const missingH1 = [];
   const hubLinesWithoutDesc = [];
+  const isHub = (rel) => /(^|\/)readme\.md$/i.test(rel);
   for (const abs of pages) {
     const rel = pageRel(abs);
     const { links, text } = referencesOf(abs, allFiles);
@@ -358,14 +404,47 @@ function cmdCheck() {
     for (const l of links) {
       const exists = allFiles.has(l.target) || fs.existsSync(path.join(root, l.target));
       if (!exists && !isHistorical(rel)) broken.push(`${rel} → ${l.raw}`);
-      if (l.target.toLowerCase().endsWith(".md") && l.target !== rel) linkedPages.add(l.target);
+      if (l.target.toLowerCase().endsWith(".md") && l.target !== rel) {
+        linkedPages.add(l.target);
+        if (isHub(rel)) hubLinked.add(l.target);
+      }
     }
-    if (/(^|\/)readme\.md$/i.test(rel)) {
-      for (const line of text.split("\n")) {
+    if (isHub(rel)) {
+      for (const line of withoutCode(text).split("\n")) {
         if (/^\s*[-*]\s+\[[^\]]+\]\([^)]+\.md(#[^)]*)?\)\s*$/.test(line)) hubLinesWithoutDesc.push(`${rel}: ${line.trim()}`);
       }
     }
   }
+
+  // Layout expected by the skill and the hook: a root README hub, every current page inside a
+  // top-level domain folder, each domain with a README hub linked from the root, and every
+  // page listed in some hub.
+  const current = pages.map(pageRel).filter((r) => !isHistorical(r) && !isPromptFile(r));
+  const rootEntries = fs.readdirSync(docRoot, { withFileTypes: true });
+  const rootHubName = rootEntries.find((e) => e.isFile() && /^readme\.md$/i.test(e.name))?.name;
+  const rootHub = rootHubName ? `${docRel}/${rootHubName}` : null;
+  const domains = rootEntries
+    .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !isHistorical(`${docRel}/${e.name}`))
+    .map((e) => e.name)
+    .filter((d) => current.some((r) => r.startsWith(`${docRel}/${d}/`)));
+  const domainHub = (d) => current.find((r) => r.toLowerCase() === `${docRel}/${d}/readme.md`.toLowerCase());
+  const rootLinks = rootHub ? referencesOf(path.join(root, rootHub), allFiles).links.map((l) => l.target) : [];
+  const layout = {
+    missingRootHub: !rootHub,
+    pagesOutsideDomains: current.filter((r) => r !== rootHub && r.split("/").length === docRel.split("/").length + 1),
+    domainsWithoutHub: domains.filter((d) => !domainHub(d)),
+    domainsNotInRootHub: domains.filter((d) => domainHub(d) && !rootLinks.includes(domainHub(d))),
+    pagesNotInAnyHub: current.filter((r) => !isHub(r) && !hubLinked.has(r)),
+  };
+  layout.conforms =
+    !layout.missingRootHub &&
+    domains.length > 0 &&
+    !layout.pagesOutsideDomains.length &&
+    !layout.domainsWithoutHub.length &&
+    !layout.domainsNotInRootHub.length &&
+    !layout.pagesNotInAnyHub.length &&
+    !hubLinesWithoutDesc.length;
+  layout.domains = domains;
   const rootReadme = `${docRel}/README.md`;
   const orphans = pages.map(pageRel).filter((r) => r !== rootReadme && !isHistorical(r) && !linkedPages.has(r));
   const foldersWithoutReadme = [];
@@ -377,11 +456,25 @@ function cmdCheck() {
     for (const e of entries) if (e.isDirectory() && !e.name.startsWith(".")) rec(path.join(dir, e.name));
   };
   rec(docRoot);
-  const obj = { pages: pages.length, broken, orphans, foldersWithoutReadme, hubLinesWithoutDesc, missingH1 };
+  const obj = { pages: pages.length, layout, broken, orphans, foldersWithoutReadme, hubLinesWithoutDesc, missingH1 };
+  const layoutLines = layout.conforms
+    ? [`layout: follows the create-jev-doc format (${domains.length} domains)`]
+    : [
+        "layout: does NOT follow the create-jev-doc format",
+        ...(layout.missingRootHub ? [`  - no ${docRel}/README.md root hub`] : []),
+        ...(!domains.length ? ["  - no domain folders: all pages sit at the root of the docs folder"] : []),
+        ...(layout.pagesOutsideDomains.length ? [`  - ${layout.pagesOutsideDomains.length} pages outside a domain folder: ${layout.pagesOutsideDomains.slice(0, 8).join(", ")}${layout.pagesOutsideDomains.length > 8 ? ", …" : ""}`] : []),
+        ...(layout.domainsWithoutHub.length ? [`  - domains without a README hub: ${layout.domainsWithoutHub.join(", ")}`] : []),
+        ...(layout.domainsNotInRootHub.length ? [`  - domains the root hub doesn't link: ${layout.domainsNotInRootHub.join(", ")}`] : []),
+        ...(layout.pagesNotInAnyHub.length ? [`  - ${layout.pagesNotInAnyHub.length} pages not listed in any README hub`] : []),
+        ...(hubLinesWithoutDesc.length ? [`  - ${hubLinesWithoutDesc.length} hub lines without a description`] : []),
+      ];
   print(
     obj,
     [
       `${pages.length} pages checked in ${docRel}/`,
+      "",
+      ...layoutLines,
       "",
       "broken links:",
       list(broken),

@@ -4,8 +4,8 @@
 
 ## Pages
 
-- [Skill files and workflows](skill.md): what each file in the skill contains, how agents load and invoke it, the create and update workflows, the `.jev-doc.json` state file and the ground rules the skill imposes.
-- [Coverage helper](doc-coverage.md): `doc-coverage.mjs` commands (`inventory`, `map`, `changed`, `check`, `stamp`), options, source-file filters, reference detection, the changed-file algorithm and its baseline, check rules and output formats.
+- [Skill files and workflows](skill.md): what each file in the skill contains, how agents load and invoke it, mode detection, the create, restructure and update workflows, the `.jev-doc.json` state file and the ground rules the skill imposes.
+- [Coverage helper](doc-coverage.md): `doc-coverage.mjs` commands (`inventory`, `map`, `changed`, `check`, `stamp`), options, source-file filters, reference detection with code stripping, git `-z` change parsing and its baseline, the layout conformance verdict, check rules and output formats.
 
 ## Ownership
 

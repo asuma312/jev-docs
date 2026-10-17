@@ -24,7 +24,7 @@ The hook command is `node "<repo>/hook.mjs"`, with the repository's absolute pat
 | `UserPromptSubmit` | `{ hooks: [{ type: "command", command, timeout: 20 }] }` |
 | `SessionStart` | `{ matcher: "compact\|clear", hooks: [{ type: "command", command: command + " --reset", timeout: 10 }] }` |
 
-For each event, the installer removes every existing hook whose command contains both `jev-docs` and `hook.mjs`, and drops groups that end up empty. On install it then appends its entry. Empty event arrays are deleted, and so is an empty `hooks` object. Other hooks and every other setting are kept as they were. The file is rewritten with two-space indentation and a trailing newline. Because previous entries are removed first, running the installer again, even from a moved checkout, leaves exactly one entry per event.
+For each event, the installer removes every existing hook that `isOurs` recognizes, and drops groups that end up empty. `isOurs` accepts a command only if it has the exact shape `node "<dir>/hook.mjs"`, optionally followed by ` --reset`. It then reads `<dir>/package.json` and accepts the hook when its `name` is `jev-docs`, so a clone in a folder with any name is recognized. When that `package.json` can't be read (for example, the clone was deleted), it falls back to accepting `<dir>` paths that contain `jev-docs`. On install it then appends its entry. Empty event arrays are deleted, and so is an empty `hooks` object. Other hooks and every other setting are kept as they were. The file is rewritten with two-space indentation and a trailing newline. Because previous entries are removed first, running the installer again, even from a moved checkout, leaves exactly one entry per event.
 
 After installing, the installer warns if `TYPESAFE_API_KEY` isn't set in its own shell. That variable doesn't tell it whether Claude Code can see the key, so the message is only a reminder.
 
@@ -39,7 +39,8 @@ The copy is a snapshot. Changes to the skill in the repository reach the agents 
 
 ## Limits
 
-- **Folder name dependency.** A hook is recognized as its own only if its command contains `jev-docs`. If the repository is cloned into a folder whose path doesn't contain `jev-docs`, reinstalling adds a duplicate entry, and `--uninstall` doesn't remove the entries. Clone it into a folder named `jev-docs`, or edit settings.json by hand.
+- An entry left by a clone that was later deleted, from a folder whose path doesn't contain `jev-docs`, can't be recognized, because neither check applies. Remove it from settings.json by hand.
+- A different tool's `hook.mjs` in a folder whose path contains `jev-docs` and has no readable `package.json` would be treated as ours by the fallback.
 - Backups accumulate, one per run, and are never cleaned up.
 - The installer doesn't write the API key and doesn't remove one from the `env` block on uninstall.
 - Claude Code loads hooks at startup, so a restart is needed after installing or uninstalling.
@@ -52,4 +53,6 @@ The copy is a snapshot. Changes to the skill in the repository reach the agents 
 - the `SessionStart` matcher and the `--reset` command
 - `--uninstall` restores the original hooks
 
-The skill copy and the skip of a foreign folder have no automated test. They were exercised by hand during development: the installer reported copies to all three folders on the development machine. The suite was run while writing this page: 13 tests, all passing.
+A second test copies `install.mjs`, `package.json` and `hook.mjs` into a folder named `docs-hook`, under paths that never contain `jev-docs`, next to a foreign `hook.mjs` hook. It checks that two runs leave one entry per event, and that uninstall removes ours and keeps the foreign one.
+
+The skill copy and the skip of a foreign folder have no automated test. They were exercised by hand during development: the installer reported copies to all three folders on the development machine. The suite was run while writing this page: 21 tests, all passing.

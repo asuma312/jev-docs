@@ -1,7 +1,7 @@
 // Two-stage selection with Jev:
 //   1. a gate question plus one yes/no question per top-level docs area;
-//   2. one yes/no question per page inside the best areas, split across
-//      parallel requests when they would not fit in one.
+//   2. one yes/no question per page inside the best areas.
+// Each stage is split across parallel requests when its questions would not fit in one.
 
 import path from "node:path";
 import { clip, toPosix } from "./docs-index.mjs";
@@ -51,9 +51,14 @@ export function chunkQuestions(entries, budget) {
   return chunks;
 }
 
-export async function select(index, state, log = { requests: [] }) {
+// `deps` replaces the TypeSafe client and `noul` helper; tests pass fakes, the hook passes nothing.
+async function defaultDeps() {
   const { TypeSafeClient, noul } = await import("@typesafe-ai/sdk");
-  const client = new TypeSafeClient({ timeout: CONFIG.timeoutMs, retry: { maxRetries: 1 }, logLevel: "off" });
+  return { client: new TypeSafeClient({ timeout: CONFIG.timeoutMs, retry: { maxRetries: 1 }, logLevel: "off" }), noul };
+}
+
+export async function select(index, state, log = { requests: [] }, deps) {
+  const { client, noul } = deps || (await defaultDeps());
   const ask = async (questions) => {
     const t = Date.now();
     const res = await client.systemOne({ state, questions, model: CONFIG.model });
@@ -61,10 +66,11 @@ export async function select(index, state, log = { requests: [] }) {
     return res.answers;
   };
   const budget = Math.max(20000, CONFIG.requestChars - JSON.stringify(state).length);
+  const askAll = async (entries) => Object.assign({}, ...(await Promise.all(chunkQuestions(entries, budget).map(ask))));
 
-  const stage1 = { gate: noul(GATE_QUESTION) };
-  index.groups.forEach((g, i) => (stage1[`g${i}`] = noul(groupQuestion(g))));
-  const a1 = await ask(stage1);
+  // Stage 1 is chunked like stage 2, so many areas can't exceed the request limit; the gate goes first.
+  const stage1 = [["gate", noul(GATE_QUESTION)], ...index.groups.map((g, i) => [`g${i}`, noul(groupQuestion(g))])];
+  const a1 = await askAll(stage1);
   log.gate = a1.gate.noul;
   const groupScores = index.groups.map((g, i) => ({ name: g.name, p: a1[`g${i}`].noul })).sort((x, y) => y.p - x.p);
   log.groups = groupScores.map((g) => `${g.name}=${g.p.toFixed(2)}`);
@@ -75,8 +81,7 @@ export async function select(index, state, log = { requests: [] }) {
   const pickedNames = new Set(picked.map((g) => g.name));
 
   const candidates = index.docs.filter((d) => pickedNames.has(d.group));
-  const entries = candidates.map((d, i) => [`d${i}`, noul(docQuestion(d))]);
-  const answers = Object.assign({}, ...(await Promise.all(chunkQuestions(entries, budget).map(ask))));
+  const answers = await askAll(candidates.map((d, i) => [`d${i}`, noul(docQuestion(d))]));
   return candidates
     .map((d, i) => ({ ...d, p: answers[`d${i}`]?.noul ?? 0 }))
     .filter((d) => d.p >= CONFIG.docThreshold)

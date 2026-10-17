@@ -28,7 +28,18 @@ function updateHook() {
   const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
   const hookPath = path.join(repoDir, "hook.mjs").split(path.sep).join("/");
   const command = `node "${hookPath}"`;
-  const isOurs = (h) => typeof h.command === "string" && h.command.includes("jev-docs") && h.command.includes("hook.mjs");
+  // A hook is ours when it runs a hook.mjs whose package.json names jev-docs, so clones in any
+  // folder are recognized. Commands of a deleted clone fall back to the old path-name check.
+  const isOurs = (h) => {
+    if (typeof h.command !== "string") return false;
+    const m = h.command.match(/^node "(.+)[\\/]hook\.mjs"( --reset)?$/);
+    if (!m) return false;
+    try {
+      return JSON.parse(fs.readFileSync(path.join(m[1], "package.json"), "utf8")).name === "jev-docs";
+    } catch {
+      return m[1].includes("jev-docs");
+    }
+  };
   // Suggest pages on each prompt; forget the session's pages when its context is compacted or cleared.
   const entries = {
     UserPromptSubmit: { hooks: [{ type: "command", command, timeout: 20 }] },

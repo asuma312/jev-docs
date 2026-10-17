@@ -36,10 +36,11 @@ Markdown is not source, so prompt files, skill text and READMEs outside the docs
 
 `referencesOf(page, fileSet)` collects the repository files a page points to, in two ways:
 
-- **Links**: every Markdown link target in the page, with any link title removed. The target is resolved relative to the page.
-- **Path tokens**: every string like `dir/file.ext`, with at least one `/` and an extension, preceded by a backtick, a quote, `(` or whitespace. A token is resolved relative to the page first, then relative to the repository root.
+- **Links**: every Markdown link target in the page *outside code*, with any link title removed. Before scanning, `withoutCode` empties fenced code blocks (```` ``` ```` or `~~~`, closed by a fence of the same character and at least the same length) and replaces each inline code span with a placeholder word. So an example link shown as code isn't read, but a link whose text is code, such as a link with `` `file.js` `` as its text, still is. The target is resolved relative to the page.
+- **Path tokens**: every string like `dir/file.ext`, with at least one `/` and an extension, preceded by a backtick, a quote, `(` or whitespace. Letters and digits from any script are allowed, so accented names match. A token is resolved relative to the page first, then relative to the repository root. Path tokens are read from the whole page, code included, because files are usually named in backticks.
+- **Inline code spans**: the full content of each single-line inline code span that contains a `/`, so a path with spaces written in backticks, such as `` `src/old name.js` ``, is found too.
 
-Targets with a URL scheme or starting with `#` are ignored. Anchors and query strings are removed, and percent-escapes are decoded. A reference counts only when the resolved path is in the file set. `map` and `changed` build the file set from source files. `check` builds it from all files plus the doc pages, and uses only the links, to find broken ones.
+Targets with a URL scheme or starting with `#` are ignored. Anchors and query strings are removed, and percent-escapes are decoded with `safeDecode`. A malformed escape such as `50%.md` is left as written instead of throwing. A reference counts only when the resolved path is in the file set. `map` and `changed` build the file set from source files. `check` builds it from all files plus the doc pages, and uses only the links, to find broken ones.
 
 Pages under `_archive`, `_generated`, `archive` or `history` folders of the docs tree are "historical". Their references are collected, but they don't count toward coverage, and their broken links aren't reported.
 
@@ -51,8 +52,10 @@ Pages under `_archive`, `_generated`, `archive` or `history` folders of the docs
 
 **`changed`** needs git and a docs folder. Its baseline is `--since`, or the `commit` in `.jev-doc.json`. If that commit doesn't exist in the repository, it falls back to the last commit that touched the docs folder. With none of these, it reports `no baseline commit`. It collects changes in two steps:
 
-1. `git diff --name-status -M <baseline> HEAD` gives committed changes, with renames as `R`.
-2. `git status --porcelain -uall` adds working-tree changes: renames (`a -> b`), deletions, additions and untracked files (`A`, unless the file was already `M` in the committed diff) and modifications.
+1. `git diff --name-status -z -M <baseline> HEAD` gives committed changes. Fields are NUL-separated: `<status>`, then the path, or `R<score>`/`C<score>` followed by the old and new paths. Renames become `R`, and copies count as an addition of the new path.
+2. `git status --porcelain -z -uall` adds working-tree changes. Entries are `XY <path>`, and a rename or copy entry is followed by a separate field with the old path. In that order, the script records renames, deletions, additions and untracked files (`A`, unless the file was already `M` in the committed diff) and modifications.
+
+`-z` keeps every path exactly as git stores it, unquoted, so names with spaces or non-ASCII characters match the `ls-files` names.
 
 It keeps changes to source files, plus deletions and renames of files that pages still reference. Then it sorts them into four lists:
 
@@ -63,12 +66,23 @@ It keeps changes to source files, plus deletions and renames of files that pages
 | `undocumentedModified` | Modified files no page references |
 | `brokenRefs` | Deleted files, and the old names of renamed files, that pages still reference |
 
-**`check`** reports, for the current pages:
+**`check`** starts with a **layout** verdict. The layout follows the create-jev-doc format, `layout.conforms`, only when all of these hold:
+
+- the docs folder has a root `README.md` hub
+- there is at least one domain: a top-level folder, not historical or dot-prefixed, with current pages
+- no current page other than the root hub sits directly in the docs folder (`pagesOutsideDomains`)
+- every domain has a `README.md` (`domainsWithoutHub`), and the root hub links it (`domainsNotInRootHub`)
+- every current page other than a `README.md` is linked from some `README.md` hub (`pagesNotInAnyHub`)
+- no hub line lacks a description
+
+The text output prints `layout: follows the create-jev-doc format (N domains)`, or `does NOT follow`, followed by each failed rule. The JSON output has the `layout` object with each list and `domains`. The skill uses this verdict to choose between update and restructure mode (see the [skill page](skill.md#mode-detection)).
+
+It then reports, for the current pages:
 
 - **broken links**: link targets that are neither a known file nor an existing path
 - **orphans**: pages that no other page links to, except the root `README.md`
 - **folders without a hub**: folders with `.md` pages other than `.prompt.md` files but no `README.md`, case-insensitive
-- **hub lines without a description**: list items in a `README.md` that consist of a single `.md` link and nothing after it
+- **hub lines without a description**: list items in a `README.md`, outside code, that consist of a single `.md` link and nothing after it
 - **missing titles**: pages without a `# ` heading after any frontmatter, ignoring `.prompt.md` files
 
 **`stamp`** writes `.jev-doc.json` with every existing field, plus `commit` (HEAD, or `null` outside git), `updatedAt` and `tool: "create-jev-doc"`. If tracked files have uncommitted changes, it notes that they count as documented only once committed. The fields are described on the [skill page](skill.md#the-state-file).
@@ -80,9 +94,8 @@ Every command prints one block of text, or with `--json` one pretty-printed JSON
 ## Limits
 
 - Coverage is file-level. A file counts as documented if any current page names it, however briefly.
-- Path tokens and links are read from the whole page, inline code and code blocks included. A path mentioned in an example still counts as a reference, and an example link in inline code is checked like a real one. This documentation shows the hub-line format in inline code, so `check` reports `page.md` as a broken link in [skill.md](skill.md) and [docs-index.md](../index/docs-index.md).
-- `git status --porcelain` quotes paths with unusual characters (including spaces in some configurations). Such paths don't match source file names, and their working-tree changes can be missed.
-- A link with a malformed percent-escape makes `decodeURIComponent` throw. The script then exits with an error instead of reporting.
+- Path tokens are read from code too, so a source path mentioned only in a code example still counts as a reference.
+- A path with spaces is found only when it is a whole inline code span or a link target (with `%20`). Plain prose with spaces isn't parsed as a path.
 - Line counts split on `\n`, and a file ending in a newline counts one extra line.
 - `check` and the root-hub exception compare `README.md` case-sensitively for the root page.
 
@@ -93,5 +106,8 @@ Every command prints one block of text, or with `--json` one pretty-printed JSON
 - `inventory` in create mode: it skips `dist/` and the lock file
 - `map` and `check`: two referenced files, one broken link, one orphan page, one hub line without a description
 - `changed` after `stamp`: the state-file baseline, a page to update, a new undocumented file, a deleted file still referenced
+- `changed` with an accented file changed in a commit, a file with a space changed in the working tree, a staged rename of a file with a space, and an untracked accented file
+- `check`: links in inline code and fenced blocks are ignored, a malformed `50%.md` link is reported without a crash, a link whose text is code still counts for `map`, and the layout verdict passes, then fails once a page sits at the docs root
+- `check` on a flat `docs/` folder with no hub: missing root hub, no domains, two pages outside domains
 
-During development, the script also ran read-only against a repository with about 4,000 source files and 1,400 pages. Each command finished in about 2 seconds. The suite was run while writing this page: 13 tests, all passing.
+During development, the script also ran read-only against a repository with about 4,000 source files and 1,400 pages. Each command finished in about 2 seconds. The suite was run while writing this page: 21 tests, all passing.

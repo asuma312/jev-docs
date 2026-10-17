@@ -68,4 +68,4 @@ The hook never sets a non-zero exit code and never prints anything other than th
 
 ## Verification
 
-[`test/session.test.mjs`](../../test/session.test.mjs) runs `hook.mjs --reset` as a child process with a session ID on stdin, and checks that the session's memory is deleted. No test runs the hook's prompt path end to end, because that path needs the TypeSafe API. The skip rules, the output shape and the log were checked by hand during development (a task-notification prompt produced `skipped: app-generated message`), but not by an automated test. The suite was run while writing this page: 13 tests, all passing.
+[`test/session.test.mjs`](../../test/session.test.mjs) runs `hook.mjs --reset` as a child process with a session ID on stdin, and checks that the session's memory is deleted. No test runs the hook's prompt path end to end, because that path needs the TypeSafe API. The skip rules, the output shape and the log were checked by hand during development (a task-notification prompt produced `skipped: app-generated message`), but not by an automated test. The suite was run while writing this page: 21 tests, all passing.

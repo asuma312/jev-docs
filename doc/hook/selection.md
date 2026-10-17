@@ -19,18 +19,20 @@
 
 ## Jev client and requests
 
-`select(index, state, log)` imports `TypeSafeClient` and `noul` from `@typesafe-ai/sdk` dynamically, so the SDK loads only when a selection actually runs. The client is created with `timeout: CONFIG.timeoutMs`, `retry: { maxRetries: 1 }` and `logLevel: "off"`. It takes its key and base URL from the SDK's own environment variables (`TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`).
+`select(index, state, log, deps)` takes an optional `deps` object `{ client, noul }`. The hook passes nothing. In that case, `defaultDeps` imports `TypeSafeClient` and `noul` from `@typesafe-ai/sdk` dynamically, so the SDK loads only when a selection actually runs. Tests pass a fake client with a `systemOne` method. The client is created with `timeout: CONFIG.timeoutMs`, `retry: { maxRetries: 1 }` and `logLevel: "off"`. It takes its key and base URL from the SDK's own environment variables (`TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`).
 
 Every request goes through the inner `ask(questions)`, which calls `client.systemOne({ state, questions, model })`. It appends `{ questions, ms, usage, model }` to `log.requests` and returns the answers. All questions are `noul` (yes/no) questions. Each answer's `noul` field is the probability of yes, from 0 to 1. The same `state` object is sent with every request: `{ request, recent_requests? }`, built by the hook runtime.
 
 ## Stage 1: gate and areas
 
-The first request contains:
+Stage 1 asks these questions, in this order:
 
 - `gate`: `GATE_QUESTION` asks whether `request` depends on knowledge specific to this software project, rather than small talk or a general question.
 - `g0`…`gN`: one `groupQuestion(g)` per entry in `index.groups`. Each asks whether someone handling `request` would need documentation from that area, and includes the area's summary.
 
-`log.gate` gets the gate probability, and `log.groups` lists every area as `name=probability`, highest first. If the gate is below `gateThreshold`, `select` returns an empty list. The stage-1 request has already been made and billed by then.
+The questions go through the same chunking as stage 2 (see below), so many areas or long area summaries are split across parallel requests instead of exceeding Jev's request limit. The gate is the first entry, so it always travels in the first chunk. With the default budget and typical summaries, this is one request.
+
+`log.gate` gets the gate probability, and `log.groups` lists every area as `name=probability`, highest first. If the gate is below `gateThreshold`, `select` returns an empty list. The stage-1 requests have already been made and billed by then.
 
 Otherwise, the areas at or above `groupThreshold` are picked, highest first, up to `maxGroups`. If none qualifies, the single highest-scoring area is picked anyway. So once the gate passes, stage 2 always runs on at least one area.
 
@@ -38,7 +40,7 @@ Otherwise, the areas at or above `groupThreshold` are picked, highest first, up 
 
 The candidates are every page in `index.docs` whose `group` is one of the picked areas. Each gets the key `d<i>` and a `docQuestion(d)`, which asks whether the assistant should read the page at path `d.rel` before handling `request`, and includes the page summary.
 
-`chunkQuestions(entries, budget)` splits the questions into consecutive chunks. It measures each question as the length of its JSON serialization and starts a new chunk when adding a question would exceed the budget. A single question larger than the budget still gets a chunk of its own. The budget is `requestChars` minus the length of the serialized state, with a floor of 20,000 characters. All chunks are sent at once with `Promise.all`, and their answers are merged. If any chunk fails, the whole selection fails, and the hook records the error.
+Both stages send their questions through the inner `askAll(entries)`, which calls `chunkQuestions(entries, budget)`. That function splits the questions into consecutive chunks. It measures each question as the length of its JSON serialization and starts a new chunk when adding a question would exceed the budget. A single question larger than the budget still gets a chunk of its own. The budget is `requestChars` minus the length of the serialized state, with a floor of 20,000 characters. All chunks are sent at once with `Promise.all`, and their answers are merged. If any chunk fails, the whole selection fails, and the hook records the error.
 
 A page's probability is its answer's `noul`, or 0 if the answer is missing. Pages at or above `docThreshold` are kept, sorted by probability from highest to lowest, and cut to `maxDocs`. Each returned page is the index entry plus `p`.
 
@@ -48,7 +50,6 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 
 ## Limits
 
-- Stage 1 is always one request and is never chunked. A docs folder with very many top-level areas, or very long area summaries, could exceed Jev's request limit. When that happens the request fails, and the hook injects nothing.
 - Probabilities from different requests aren't calibrated against each other, but pages from different chunks are compared as if they were.
 - The gate and area thresholds are absolute. Areas with uniformly low scores fall back to the single best area instead of an empty result.
 - There is no retry budget across chunks: a timeout in one chunk drops every page from that prompt.
@@ -56,4 +57,13 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 
 ## Verification
 
-[`test/docs-index.test.mjs`](../../test/docs-index.test.mjs) covers `chunkQuestions` (it respects the budget and keeps every question) and `renderContext` (paths are relative to the project). No automated test calls `select`, because it needs the live API. Live runs against a project with about 950 pages, made by hand during development, used 2 to 3 requests and took about 1 second per prompt. Those runs are not repeatable from this repository. The suite was run while writing this page: 13 tests, all passing.
+[`test/docs-index.test.mjs`](../../test/docs-index.test.mjs) covers `chunkQuestions` (it respects the budget and keeps every question) and `renderContext` (paths are relative to the project).
+
+[`test/select.test.mjs`](../../test/select.test.mjs) calls `select` with a fake client and `noul` through the `deps` argument, and checks four things:
+
+- stage 1 is split across several requests when 40 large areas exceed the budget, with the gate first
+- a gate below the threshold stops after one request
+- stage 2 asks only about pages in the picked areas and applies the page threshold
+- the single best area is explored when no area passes
+
+These tests don't reach the TypeSafe API. Live runs against a project with about 950 pages, made by hand during development, used 2 to 3 requests and took about 1 second per prompt. Those runs are not repeatable from this repository. The suite was run while writing this page: 21 tests, all passing.
