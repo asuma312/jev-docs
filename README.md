@@ -50,7 +50,7 @@ The repository also includes **`create-jev-doc`**, an agent skill that writes an
 ## Quick start
 
 ```bash
-git clone https://github.com/<owner>/jev-docs.git
+git clone https://github.com/asuma312/jev-docs.git
 cd jev-docs
 npm install
 node install.mjs
