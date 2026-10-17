@@ -222,6 +222,7 @@ This removes both hooks from `~/.claude/settings.json` (after writing a backup) 
 ## Project layout
 
 ```
+doc/                      contract-level docs for this repository, written with create-jev-doc (start at doc/README.md)
 hook.mjs                  hook entry point: stdin → index → Jev → context; --dry-run and --reset
 install.mjs               registers or removes the hooks and copies the skill
 src/

@@ -1,0 +1,14 @@
+{
+  "exclude": [],
+  "plan": {
+    "hook": "done",
+    "index": "done",
+    "session": "done",
+    "install": "done",
+    "skill": "done",
+    "testing": "done"
+  },
+  "commit": "587c7354d63e6dc8f735907591cf2f0831f84066",
+  "updatedAt": "2026-10-17T00:38:57.746Z",
+  "tool": "create-jev-doc"
+}
