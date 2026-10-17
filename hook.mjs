@@ -73,6 +73,8 @@ async function main() {
 
   try {
     if (prompt.length < 8 || prompt.startsWith("/")) return void (log.skipped = "short prompt or slash command");
+    // Messages the app injects itself (task notifications, command output, events) start with a tag.
+    if (/^<[a-z][\w-]*[\s>]/i.test(prompt)) return void (log.skipped = "app-generated message");
     const docsRoot = findDocsRoot(projectDir);
     if (!docsRoot) return void (log.skipped = "no doc/ or docs/ folder");
 
