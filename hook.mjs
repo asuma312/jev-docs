@@ -3,6 +3,10 @@
 // project's doc/ or docs/ folder matter for the prompt, and injects the list
 // as context. Fails open: any error, timeout or missing key injects nothing.
 //
+// Within a session, a page is injected at most once, and never after the
+// agent has opened it. `--reset` (wired to SessionStart on compact/clear)
+// forgets the session's pages, since the earlier context is gone.
+//
 // Dry run from a shell:
 //   node hook.mjs --dry-run --cwd <project> "<prompt>"
 // Without TYPESAFE_API_KEY the dry run only builds the index and shows what
@@ -12,7 +16,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildIndex, CACHE_DIR, clip, findDocsRoot } from "./src/docs-index.mjs";
 import { docQuestion, renderContext, select } from "./src/select.mjs";
+import { loadSuggested, newPagesOnly, pathKey, pruneSessions, readFilesFromTranscript, resetSession, saveSuggested } from "./src/session.mjs";
 import { recentUserMessages } from "./src/transcript.mjs";
+
+const DEDUP = process.env.JEV_DOCS_DEDUP !== "0";
 
 function writeLog(log) {
   try {
@@ -30,10 +37,11 @@ async function readStdin() {
 
 function parseArgs(argv) {
   const dryRun = argv.includes("--dry-run");
+  const reset = argv.includes("--reset");
   const cwdIdx = argv.indexOf("--cwd");
   const cwd = cwdIdx >= 0 ? argv[cwdIdx + 1] : process.cwd();
   const prompt = argv.filter((a, i) => !a.startsWith("--") && argv[i - 1] !== "--cwd").join(" ");
-  return { dryRun, cwd, prompt };
+  return { dryRun, reset, cwd, prompt };
 }
 
 function printDryRunIndex(docsRoot, index, ms) {
@@ -56,6 +64,7 @@ async function main() {
       return;
     }
   }
+  if (args.reset) return resetSession(input.session_id);
 
   const prompt = (input.prompt || "").trim();
   const projectDir = (!args.dryRun && process.env.CLAUDE_PROJECT_DIR) || input.cwd || process.cwd();
@@ -89,8 +98,18 @@ async function main() {
       console.log(selected.length ? renderContext(selected, docsRoot, projectDir) : "(nothing injected)");
       return;
     }
-    if (!selected.length) return;
-    const additionalContext = renderContext(selected, docsRoot, projectDir);
+    let toInject = selected;
+    if (DEDUP && input.session_id) {
+      const suggested = loadSuggested(input.session_id);
+      toInject = newPagesOnly(selected, docsRoot, suggested, readFilesFromTranscript(input.transcript_path));
+      log.alreadyKnown = selected.length - toInject.length;
+      for (const d of toInject) suggested.add(pathKey(path.join(docsRoot, d.rel)));
+      if (toInject.length) saveSuggested(input.session_id, suggested);
+      pruneSessions();
+    }
+    log.injected = toInject.map((d) => d.rel);
+    if (!toInject.length) return;
+    const additionalContext = renderContext(toInject, docsRoot, projectDir);
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } }));
   } catch (err) {
     log.error = String(err?.message || err);

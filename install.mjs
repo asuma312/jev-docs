@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Installs (or removes) jev-docs for the current user:
-//   - the UserPromptSubmit hook in Claude Code's ~/.claude/settings.json
+//   - the UserPromptSubmit hook, plus a SessionStart reset on compact/clear,
+//     in Claude Code's ~/.claude/settings.json
 //   - the create-jev-doc skill in ~/.claude/skills, plus ~/.agents/skills and
 //     ~/.codex/skills when those agent folders exist
 //
@@ -28,6 +29,11 @@ function updateHook() {
   const hookPath = path.join(repoDir, "hook.mjs").split(path.sep).join("/");
   const command = `node "${hookPath}"`;
   const isOurs = (h) => typeof h.command === "string" && h.command.includes("jev-docs") && h.command.includes("hook.mjs");
+  // Suggest pages on each prompt; forget the session's pages when its context is compacted or cleared.
+  const entries = {
+    UserPromptSubmit: { hooks: [{ type: "command", command, timeout: 20 }] },
+    SessionStart: { matcher: "compact|clear", hooks: [{ type: "command", command: `${command} --reset`, timeout: 10 }] },
+  };
 
   let settings = {};
   if (fs.existsSync(settingsPath)) {
@@ -35,17 +41,22 @@ function updateHook() {
     fs.copyFileSync(settingsPath, `${settingsPath}.bak-${Date.now()}`);
   }
   settings.hooks ??= {};
-  const groups = (settings.hooks.UserPromptSubmit ??= []);
-  // Drop any previous registration so reinstalling from a new path doesn't duplicate it.
-  for (const g of groups) g.hooks = (g.hooks || []).filter((h) => !isOurs(h));
-  settings.hooks.UserPromptSubmit = groups.filter((g) => g.hooks.length);
-  if (!uninstall) settings.hooks.UserPromptSubmit.push({ hooks: [{ type: "command", command, timeout: 20 }] });
-  if (!settings.hooks.UserPromptSubmit.length) delete settings.hooks.UserPromptSubmit;
+  for (const [event, entry] of Object.entries(entries)) {
+    // Drop any previous registration so reinstalling from a new path doesn't duplicate it.
+    const groups = (settings.hooks[event] ?? []).map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !isOurs(h)) }));
+    settings.hooks[event] = groups.filter((g) => g.hooks.length);
+    if (!uninstall) settings.hooks[event].push(entry);
+    if (!settings.hooks[event].length) delete settings.hooks[event];
+  }
   if (!Object.keys(settings.hooks).length) delete settings.hooks;
 
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-  console.log(uninstall ? `Removed the hook from ${settingsPath}` : `Hook registered in ${settingsPath}:\n  ${command}`);
+  console.log(
+    uninstall
+      ? `Removed the hooks from ${settingsPath}`
+      : `Hooks registered in ${settingsPath}:\n  UserPromptSubmit: ${command}\n  SessionStart (compact|clear): ${command} --reset`,
+  );
   if (!uninstall && !process.env.TYPESAFE_API_KEY) {
     console.log("  TYPESAFE_API_KEY is not set in this shell. The hook stays silent until Claude Code can see it.");
   }

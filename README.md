@@ -22,6 +22,7 @@ The repository also ships the **`create-jev-doc` skill**. It writes and maintain
 2. **Stage 1: areas.** One Jev request asks a gate question ("does this prompt depend on project-specific knowledge?") and one yes/no question per top-level folder. Small talk stops here and nothing is injected.
 3. **Stage 2: pages.** For the best areas (up to 4), Jev answers one yes/no question per page. Questions are evaluated in parallel inside a request, and large areas are split across parallel requests to stay under Jev's 64K-token limit.
 4. **Inject.** Pages with a probability of 0.5 or more (up to 8, highest first) are added to the prompt context. The list is phrased as optional, so a wrong pick costs little.
+5. **Only new pages.** Within a session, a page is suggested at most once, and not at all if the agent already opened it with the Read tool. If every selected page is already known, nothing is injected, so a long conversation on one topic doesn't fill up with the same list. When the session is compacted or cleared, the earlier context is gone, so a `SessionStart` hook resets the memory and pages can be suggested again.
 
 The state Jev sees is the prompt plus the last three user messages of the session, so follow-up prompts ("now do the same for the UI") still get the right pages.
 
@@ -53,7 +54,7 @@ node install.mjs
 
 `install.mjs` does two things:
 
-- It adds a `UserPromptSubmit` hook to `~/.claude/settings.json`, after writing a backup.
+- It adds two hooks to `~/.claude/settings.json`, after writing a backup: `UserPromptSubmit`, which suggests the pages, and `SessionStart` (on `compact` and `clear`), which resets the session's memory of what was suggested.
 - It copies the `create-jev-doc` skill to `~/.claude/skills/`, and also to `~/.agents/skills/` and `~/.codex/skills/` when those agent folders exist.
 
 Use `--no-skill` or `--skill-only` to install just one of them, and `--uninstall` to remove both. The skill is a copy, so run `node install.mjs` again after pulling updates.
@@ -117,7 +118,8 @@ Environment variables for the hook, all optional:
 | `JEV_DOCS_GATE_THRESHOLD` | 0.3 | Below this, the prompt is treated as small talk |
 | `JEV_DOCS_TIMEOUT_MS` | 6000 | Timeout per Jev request |
 | `JEV_DOCS_MODEL` | SDK default (`jev-latest`) | Jev model to use |
-| `JEV_DOCS_CACHE_DIR` | `~/.claude/cache/jev-docs` | Index cache and last-run log |
+| `JEV_DOCS_DEDUP` | on | Set to `0` to inject the selected pages on every prompt, even if already suggested or read |
+| `JEV_DOCS_CACHE_DIR` | `~/.claude/cache/jev-docs` | Index cache, per-session memory and last-run log |
 
 **Skipped automatically:** folders starting with `.` or `_`, folders named `archive`, `history`, `screenshots` or `node_modules`, and `*.prompt.md` files.
 
@@ -147,7 +149,13 @@ On every prompt that isn't skipped, the hook sends data to TypeSafe's API (`api.
 
 It does not send code, tool output, assistant replies or files outside the docs folder. Don't install it on projects whose prompts or doc titles can't leave your machine, and check TypeSafe's own terms for how they handle request data.
 
-Locally, the hook writes two things under `~/.claude/cache/jev-docs/` (or `JEV_DOCS_CACHE_DIR`): the index cache, and `last-run.json`, which holds the start of the latest prompt (up to 300 characters), the scores and the selected pages. Both stay on your machine. Delete that folder at any time.
+Locally, the hook writes three things under `~/.claude/cache/jev-docs/` (or `JEV_DOCS_CACHE_DIR`):
+
+- the index cache
+- `sessions/<session id>.json`, the paths of the pages already suggested in each session. These are deleted after two weeks without use.
+- `last-run.json`, which holds the start of the latest prompt (up to 300 characters), the scores, and the selected and injected pages
+
+All of this stays on your machine, and you can delete that folder at any time. To spot pages the agent already opened, the hook also reads the session transcript locally. That transcript is never sent anywhere.
 
 The hook reads the key only from the `TYPESAFE_API_KEY` environment variable. It never writes the key to disk or to its logs.
 
