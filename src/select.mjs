@@ -18,6 +18,8 @@ export const CONFIG = {
   maxGroups: num("JEV_DOCS_MAX_GROUPS", 4),
   gateThreshold: num("JEV_DOCS_GATE_THRESHOLD", 0.3),
   timeoutMs: num("JEV_DOCS_TIMEOUT_MS", 6000),
+  // Whole-run budget, counted from process start: past it, pending requests are aborted.
+  deadlineMs: num("JEV_DOCS_DEADLINE_MS", 5000),
   // Rough per-request budget in characters (~4 chars per token, well under Jev's 64K tokens).
   requestChars: num("JEV_DOCS_REQUEST_CHARS", 120000),
   model: process.env.JEV_DOCS_MODEL || undefined,
@@ -57,11 +59,13 @@ async function defaultDeps() {
   return { client: new TypeSafeClient({ timeout: CONFIG.timeoutMs, retry: { maxRetries: 1 }, logLevel: "off" }), noul };
 }
 
-export async function select(index, state, log = { requests: [] }, deps) {
+// `signal` aborts every pending request; the hook ties it to CONFIG.deadlineMs.
+export async function select(index, state, log = { requests: [] }, deps, signal) {
   const { client, noul } = deps || (await defaultDeps());
   const ask = async (questions) => {
+    signal?.throwIfAborted();
     const t = Date.now();
-    const res = await client.systemOne({ state, questions, model: CONFIG.model });
+    const res = await client.systemOne({ state, questions, model: CONFIG.model }, signal ? { signal } : undefined);
     log.requests.push({ questions: Object.keys(questions).length, ms: Date.now() - t, usage: res.usage, model: res.model });
     return res.answers;
   };

@@ -37,7 +37,7 @@ The repository also includes **`create-jev-doc`**, an agent skill that writes an
 - **Fast.** About one second per prompt, in two batched Jev requests, even on a docs folder with about a thousand pages.
 - **Context-friendly.** Each page is suggested at most once per session, and never after the agent has already opened it.
 - **Deterministic plumbing.** Indexing, question building, thresholds and deduplication are plain code. Jev only answers yes/no questions with a probability.
-- **Fail-open.** If the key is missing, a request times out or anything else goes wrong, nothing is injected and the agent carries on as usual.
+- **Fail-open and time-bounded.** If the key is missing, a request fails, or the 5-second deadline passes, nothing is injected and the agent carries on as usual.
 - **Docs tooling included.** The `create-jev-doc` skill creates a docs folder from the code, or updates the existing one after code changes.
 
 ## Requirements
@@ -162,7 +162,8 @@ Environment variables for the hook, all optional:
 | `JEV_DOCS_GROUP_THRESHOLD` | 0.35 | Minimum probability for an area to be explored |
 | `JEV_DOCS_MAX_GROUPS` | 4 | Maximum areas explored in stage 2 |
 | `JEV_DOCS_GATE_THRESHOLD` | 0.3 | Below this, the prompt is treated as not needing project docs |
-| `JEV_DOCS_TIMEOUT_MS` | 6000 | Timeout per Jev request |
+| `JEV_DOCS_TIMEOUT_MS` | 6000 | Timeout per Jev request attempt |
+| `JEV_DOCS_DEADLINE_MS` | 5000 | Maximum time per prompt, counted from when the hook process starts. Past it, pending requests are aborted and nothing is injected |
 | `JEV_DOCS_MODEL` | SDK default (`jev-latest`) | Jev model to use |
 | `JEV_DOCS_DEDUP` | on | Set to `0` to inject the selected pages on every prompt, even if already suggested or read |
 | `JEV_DOCS_CACHE_DIR` | `~/.claude/cache/jev-docs` | Index cache, per-session memory and last-run log |
@@ -182,7 +183,9 @@ notes/raw/
 
 ## Troubleshooting
 
-Start with `~/.claude/cache/jev-docs/last-run.json`. It records the latest run: `skipped` with a reason, or the gate and area scores, the selected pages, `alreadyKnown` (dropped by deduplication), `injected`, timings and token usage, or an `error`.
+Start with `~/.claude/cache/jev-docs/last-run.json`. It records the latest run: `skipped` with a reason, or the gate and area scores, the selected pages, `alreadyKnown` (dropped by deduplication), `injected`, timings and token usage, or an `error`. `runs.jsonl` in the same folder keeps one line per run (the newest 200), so you can find an earlier run after other prompts have overwritten `last-run.json`.
+
+Each run also records `startupMs` (time for Node to start) and `phases` (milliseconds for `index`, `transcript`, `select` and `dedup`), which show where a slow prompt spent its time.
 
 | Symptom | Likely cause |
 |---|---|
@@ -192,6 +195,8 @@ Start with `~/.claude/cache/jev-docs/last-run.json`. It records the latest run: 
 | `error` mentions authentication | The key is wrong or revoked. |
 | `selected` is empty | No page passed the threshold. Improve the hub descriptions, or lower `JEV_DOCS_THRESHOLD`. |
 | Pages are selected but `injected` is empty | They were already suggested or read in this session. That's deduplication working. |
+| `error` mentions the deadline | The run took longer than `JEV_DOCS_DEADLINE_MS`. Check `startupMs` and `phases`: a high `startupMs` usually means the machine is under heavy load, and a high `select` means slow API responses. |
+| Prompts take noticeably longer to start | Look for long `totalMs` in `runs.jsonl`. Lower `JEV_DOCS_DEADLINE_MS` to cap the delay, at the cost of fewer suggestions. |
 
 ## Privacy and data flow
 
@@ -206,7 +211,8 @@ Locally, the hook writes three things under `~/.claude/cache/jev-docs/` (or `JEV
 
 - the index cache
 - `sessions/<session id>.json`, with the paths of the pages already suggested in each session. These files are deleted after two weeks without use.
-- `last-run.json`, with the start of the latest prompt (up to 300 characters), the scores, and the selected and injected pages
+- `last-run.json`, with the start of the latest prompt (up to 300 characters), the scores, the selected and injected pages, and timings
+- `runs.jsonl`, the same record for each of the last 200 or so runs
 
 All of this stays on your machine, and you can delete that folder at any time. To spot pages the agent already opened, the hook also reads the session transcript, locally only.
 

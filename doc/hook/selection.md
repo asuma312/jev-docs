@@ -14,14 +14,15 @@
 | `maxGroups` | `JEV_DOCS_MAX_GROUPS` | 4 | Cap on areas explored in stage 2 |
 | `gateThreshold` | `JEV_DOCS_GATE_THRESHOLD` | 0.3 | Below this, stage 2 is skipped |
 | `timeoutMs` | `JEV_DOCS_TIMEOUT_MS` | 6000 | Per-attempt SDK timeout, in milliseconds |
+| `deadlineMs` | `JEV_DOCS_DEADLINE_MS` | 5000 | Whole-run budget from process start; the hook aborts pending requests past it (see [hook runtime](runtime.md#deadline)) |
 | `requestChars` | `JEV_DOCS_REQUEST_CHARS` | 120000 | Character budget per request, state included |
 | `model` | `JEV_DOCS_MODEL` | unset | Passed as `model`; unset lets the SDK use its default |
 
 ## Jev client and requests
 
-`select(index, state, log, deps)` takes an optional `deps` object `{ client, noul }`. The hook passes nothing. In that case, `defaultDeps` imports `TypeSafeClient` and `noul` from `@typesafe-ai/sdk` dynamically, so the SDK loads only when a selection actually runs. Tests pass a fake client with a `systemOne` method. The client is created with `timeout: CONFIG.timeoutMs`, `retry: { maxRetries: 1 }` and `logLevel: "off"`. It takes its key and base URL from the SDK's own environment variables (`TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`).
+`select(index, state, log, deps, signal)` takes an optional `deps` object `{ client, noul }` and an optional `AbortSignal`. The hook passes nothing. In that case, `defaultDeps` imports `TypeSafeClient` and `noul` from `@typesafe-ai/sdk` dynamically, so the SDK loads only when a selection actually runs. Tests pass a fake client with a `systemOne` method. The client is created with `timeout: CONFIG.timeoutMs`, `retry: { maxRetries: 1 }` and `logLevel: "off"`. It takes its key and base URL from the SDK's own environment variables (`TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`).
 
-Every request goes through the inner `ask(questions)`, which calls `client.systemOne({ state, questions, model })`. It appends `{ questions, ms, usage, model }` to `log.requests` and returns the answers. All questions are `noul` (yes/no) questions. Each answer's `noul` field is the probability of yes, from 0 to 1. The same `state` object is sent with every request: `{ request, recent_requests? }`, built by the hook runtime.
+Every request goes through the inner `ask(questions)`. It first calls `signal.throwIfAborted()`, so no new request starts after an abort. Then it calls `client.systemOne({ state, questions, model }, { signal })`, so the SDK cancels the request in flight when the signal fires. It appends `{ questions, ms, usage, model }` to `log.requests` and returns the answers. All questions are `noul` (yes/no) questions. Each answer's `noul` field is the probability of yes, from 0 to 1. The same `state` object is sent with every request: `{ request, recent_requests? }`, built by the hook runtime.
 
 ## Stage 1: gate and areas
 
@@ -53,7 +54,7 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 - Probabilities from different requests aren't calibrated against each other, but pages from different chunks are compared as if they were.
 - The gate and area thresholds are absolute. Areas with uniformly low scores fall back to the single best area instead of an empty result.
 - There is no retry budget across chunks: a timeout in one chunk drops every page from that prompt.
-- With the client's `maxRetries: 1`, a request can take up to about twice `timeoutMs`, plus backoff, before it fails.
+- With the client's `maxRetries: 1`, a single request could take about twice `timeoutMs`, plus backoff, but the hook's deadline (5 s by default) cuts it off first.
 
 ## Verification
 
@@ -65,5 +66,6 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 - a gate below the threshold stops after one request
 - stage 2 asks only about pages in the picked areas and applies the page threshold
 - the single best area is explored when no area passes
+- an aborted signal rejects `select` while a fake request is still pending, in well under a second
 
-These tests don't reach the TypeSafe API. Live runs against a project with about 950 pages, made by hand during development, used 2 to 3 requests and took about 1 second per prompt. Those runs are not repeatable from this repository. The suite was run while writing this page: 21 tests, all passing.
+These tests don't reach the TypeSafe API. Live runs against a project with about 950 pages, made by hand during development, used 2 to 3 requests and took about 1 second per prompt. Those runs are not repeatable from this repository. The suite was run while writing this page: 24 tests, all passing.

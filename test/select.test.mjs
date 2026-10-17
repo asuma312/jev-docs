@@ -56,6 +56,24 @@ test("stage 2 asks only about pages in picked areas and applies the page thresho
   assert.equal(client.calls.at(-1).length, 2);
 });
 
+test("an aborted signal stops pending requests", async () => {
+  const client = {
+    systemOne: (_req, opts) =>
+      new Promise((resolve, reject) => {
+        const t = setTimeout(() => resolve({ answers: {}, usage: {}, model: "fake" }), 2000);
+        opts?.signal?.addEventListener("abort", () => {
+          clearTimeout(t);
+          reject(opts.signal.reason);
+        });
+      }),
+  };
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(new Error("deadline")), 50);
+  const t0 = Date.now();
+  await assert.rejects(select(index(3), { request: "x" }, { requests: [] }, { client, noul }, ac.signal), /deadline/);
+  assert.ok(Date.now() - t0 < 1000);
+});
+
 test("when no area passes, the single best area is still explored", async () => {
   const client = fakeClient((k, text) => (k === "gate" ? 0.9 : k.startsWith("g") ? (text.includes("area2/") ? 0.2 : 0.1) : 0.9));
   const out = await select(index(3), { request: "x" }, { requests: [] }, { client, noul });

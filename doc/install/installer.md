@@ -55,4 +55,4 @@ The copy is a snapshot. Changes to the skill in the repository reach the agents 
 
 A second test copies `install.mjs`, `package.json` and `hook.mjs` into a folder named `docs-hook`, under paths that never contain `jev-docs`, next to a foreign `hook.mjs` hook. It checks that two runs leave one entry per event, and that uninstall removes ours and keeps the foreign one.
 
-The skill copy and the skip of a foreign folder have no automated test. They were exercised by hand during development: the installer reported copies to all three folders on the development machine. The suite was run while writing this page: 21 tests, all passing.
+The skill copy and the skip of a foreign folder have no automated test. They were exercised by hand during development: the installer reported copies to all three folders on the development machine. The suite was run while writing this page: 24 tests, all passing.

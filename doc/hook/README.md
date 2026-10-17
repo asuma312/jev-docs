@@ -4,7 +4,7 @@ The hook runs on Claude Code's `UserPromptSubmit` event, decides whether a promp
 
 ## Pages
 
-- [Hook runtime](runtime.md): stdin input fields, argument modes (`--dry-run`, `--reset`, `--cwd`), project directory resolution, skip rules, the order of steps, the JSON output shape, the `last-run.json` log and fail-open error handling.
+- [Hook runtime](runtime.md): stdin input fields, argument modes (`--dry-run`, `--reset`, `--cwd`), project directory resolution, skip rules, the order of steps, the JSON output shape, the whole-run deadline, phase timings, the `last-run.json` log and `runs.jsonl` history, and fail-open error handling.
 - [Two-stage selection](selection.md): Jev client setup, gate and area questions, page questions, thresholds and caps, request chunking by character budget, environment variables and the rendered context text.
 
 ## Ownership

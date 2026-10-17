@@ -15,16 +15,26 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildIndex, CACHE_DIR, clip, findDocsRoot } from "./src/docs-index.mjs";
-import { docQuestion, renderContext, select } from "./src/select.mjs";
+import { CONFIG, docQuestion, renderContext, select } from "./src/select.mjs";
 import { loadSuggested, newPagesOnly, pathKey, pruneSessions, readFilesFromTranscript, resetSession, saveSuggested } from "./src/session.mjs";
 import { recentUserMessages } from "./src/transcript.mjs";
 
 const DEDUP = process.env.JEV_DOCS_DEDUP !== "0";
+const HISTORY_MAX_BYTES = 512 * 1024;
+const HISTORY_KEEP_LINES = 200;
 
+// last-run.json holds the latest run; runs.jsonl keeps one line per run, trimmed to the
+// newest 200 lines once it passes 512 KB, so slow or failed runs stay diagnosable.
 function writeLog(log) {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
     fs.writeFileSync(path.join(CACHE_DIR, "last-run.json"), JSON.stringify(log, null, 2));
+    const history = path.join(CACHE_DIR, "runs.jsonl");
+    fs.appendFileSync(history, `${JSON.stringify(log)}\n`);
+    if (fs.statSync(history).size > HISTORY_MAX_BYTES) {
+      const lines = fs.readFileSync(history, "utf8").trimEnd().split("\n");
+      fs.writeFileSync(history, `${lines.slice(-HISTORY_KEEP_LINES).join("\n")}\n`);
+    }
   } catch {}
 }
 
@@ -70,6 +80,14 @@ async function main() {
   const projectDir = (!args.dryRun && process.env.CLAUDE_PROJECT_DIR) || input.cwd || process.cwd();
   const log = { at: new Date().toISOString(), projectDir, prompt: clip(prompt, 300), requests: [] };
   const started = Date.now();
+  // Time Node spent starting and reading stdin before main's work; high under CPU load.
+  log.startupMs = Math.round(process.uptime() * 1000);
+  log.phases = {};
+  const phase = (name, t) => (log.phases[name] = Date.now() - t);
+  // The deadline counts from process start, so a slow startup leaves less time for Jev.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error(`deadline of ${CONFIG.deadlineMs} ms reached`)), Math.max(0, CONFIG.deadlineMs - log.startupMs));
+  timer.unref();
 
   try {
     if (prompt.length < 8 || prompt.startsWith("/")) return void (log.skipped = "short prompt or slash command");
@@ -78,7 +96,9 @@ async function main() {
     const docsRoot = findDocsRoot(projectDir);
     if (!docsRoot) return void (log.skipped = "no doc/ or docs/ folder");
 
+    const tIndex = Date.now();
     const index = buildIndex(docsRoot);
+    phase("index", tIndex);
     log.indexed = { docs: index.docs.length, groups: index.groups.length, ms: Date.now() - started };
     if (!index.docs.length) return void (log.skipped = "no markdown pages");
     if (args.dryRun) printDryRunIndex(docsRoot, index, log.indexed.ms);
@@ -89,11 +109,15 @@ async function main() {
       return;
     }
 
+    const tRecent = Date.now();
     const state = { request: prompt };
     const recent = recentUserMessages(input.transcript_path, prompt);
     if (recent.length) state.recent_requests = recent;
+    phase("transcript", tRecent);
 
-    const selected = await select(index, state, log);
+    const tSelect = Date.now();
+    const selected = await select(index, state, log, undefined, deadline.signal);
+    phase("select", tSelect);
     log.selected = selected.map((d) => `${d.rel} (${d.p.toFixed(2)})`);
     if (args.dryRun) {
       console.log(`\ngate=${log.gate?.toFixed(2)} top areas: ${(log.groups || []).slice(0, 6).join(", ")}\n`);
@@ -101,6 +125,7 @@ async function main() {
       return;
     }
     let toInject = selected;
+    const tDedup = Date.now();
     if (DEDUP && input.session_id) {
       const suggested = loadSuggested(input.session_id);
       toInject = newPagesOnly(selected, docsRoot, suggested, readFilesFromTranscript(input.transcript_path));
@@ -109,14 +134,16 @@ async function main() {
       if (toInject.length) saveSuggested(input.session_id, suggested);
       pruneSessions();
     }
+    phase("dedup", tDedup);
     log.injected = toInject.map((d) => d.rel);
     if (!toInject.length) return;
     const additionalContext = renderContext(toInject, docsRoot, projectDir);
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } }));
   } catch (err) {
-    log.error = String(err?.message || err);
+    log.error = deadline.signal.aborted ? String(deadline.signal.reason?.message || "deadline reached") : String(err?.message || err);
     if (args.dryRun) console.error(`error: ${log.error}`);
   } finally {
+    clearTimeout(timer);
     log.totalMs = Date.now() - started;
     writeLog(log);
   }

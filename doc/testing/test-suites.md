@@ -15,6 +15,7 @@ The suites never touch the real user folders:
 - `docs-index.test.mjs` and `session.test.mjs` set `JEV_DOCS_CACHE_DIR` to a new temporary folder before they import the modules, because the modules fix `CACHE_DIR` at load time.
 - The installer tests set `HOME` and `USERPROFILE` to a temporary home folder, and pass `--no-skill`. One of them runs a copy of the installer from a folder named `docs-hook`.
 - `select.test.mjs` passes a fake client and `noul` to `select`, so no SDK request is made.
+- `hook.test.mjs` sets `JEV_DOCS_CACHE_DIR` to a temporary folder and clears `CLAUDE_PROJECT_DIR` for the child process. Its deadline test points `TYPESAFE_BASE_URL` at a local server on `127.0.0.1` and uses the test key `test-key`, so nothing leaves the machine.
 - `doc-coverage.test.mjs` creates a fresh git repository in a temporary folder for each test, and configures a local test identity.
 
 Temporary folders are not deleted after the run.
@@ -50,6 +51,14 @@ Temporary folders are not deleted after the run.
 | gate stop | A gate below the threshold returns nothing after one request and logs the gate |
 | stage 2 | Only pages in picked areas are asked; the page threshold keeps one page |
 | fallback area | With no area above the threshold, the best area's pages are still asked |
+| abort | An aborted signal rejects `select` while a fake request is pending, in under a second |
+
+[`test/hook.test.mjs`](../../test/hook.test.mjs) runs [`hook.mjs`](../hook/runtime.md) as a child process:
+
+| Test | Checks |
+|---|---|
+| deadline | With an API that never answers and a 1,500 ms deadline, the hook exits with code 0, no stdout, in under 4 s; the log has a deadline error, `startupMs`, `phases.index` and one history line |
+| history of skipped runs | A slash command and a task notification each append a `runs.jsonl` line with the right `skipped` reason |
 
 [`test/doc-coverage.test.mjs`](../../test/doc-coverage.test.mjs) tests the [coverage helper](../skill/doc-coverage.md) through its JSON output:
 
@@ -66,7 +75,7 @@ Temporary folders are not deleted after the run.
 
 No automated test covers these behaviors. They rest on reading the code and on manual runs:
 
-- the hook's prompt path: skip rules, calls to `select`, deduplication wiring, output JSON and `last-run.json`
+- the hook's successful prompt path: real Jev answers, deduplication wiring and the output JSON
 - `select` against the live TypeSafe API, including real timeouts and errors
 - the index cache (signature and reuse) and the topic ordering in area summaries
 - `recentUserMessages`
@@ -76,4 +85,4 @@ No automated test covers these behaviors. They rest on reading the code and on m
 
 ## Last run
 
-The suite was run while this documentation was written: 21 tests, 21 passing, 0 failing.
+The suite was run while this documentation was written: 24 tests, 24 passing, 0 failing.

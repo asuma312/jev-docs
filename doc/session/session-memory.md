@@ -47,4 +47,4 @@ The hook applies it only when `JEV_DOCS_DEDUP` is not `"0"` and the input has a 
 - `readFilesFromTranscript` finding a Read call and ignoring a Bash call and an invalid line
 - `hook.mjs --reset` deleting the session file when given a session ID on stdin
 
-`pruneSessions` has no automated test. One live session during development recorded a suggested page in a session file. The suite was run while writing this page: 21 tests, all passing.
+`pruneSessions` has no automated test. One live session during development recorded a suggested page in a session file. The suite was run while writing this page: 24 tests, all passing.
