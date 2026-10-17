@@ -14,6 +14,8 @@ read the ones that apply before starting, and ignore any that don't fit):
 
 It is installed once, globally, and works in every project that has a `doc/`, `docs/` or `documentation/` folder. In projects without one it does nothing.
 
+The repository also ships the **`create-jev-doc` skill**. It writes and maintains that docs folder: contract-level pages organized in README hubs, which is the structure the hook reads best. See [Writing the docs](#writing-the-docs-the-create-jev-doc-skill).
+
 ## How it works
 
 1. **Index.** The hook walks the docs folder and builds a compact entry per Markdown page: path, title, a short description and the `##` section headings. The description comes from, in order: a `description:` field in the page's frontmatter, the text next to a link to the page in a README or index hub (`- [Billing](billing/README.md): subscriptions, invoices…`), or the page's first paragraph. The index is cached and rebuilt only when a page changes.
@@ -49,7 +51,12 @@ npm install
 node install.mjs
 ```
 
-`install.mjs` adds a `UserPromptSubmit` hook to `~/.claude/settings.json` (it writes a backup first). Run `node install.mjs --uninstall` to remove it.
+`install.mjs` does two things:
+
+- It adds a `UserPromptSubmit` hook to `~/.claude/settings.json`, after writing a backup.
+- It copies the `create-jev-doc` skill to `~/.claude/skills/`, and also to `~/.agents/skills/` and `~/.codex/skills/` when those agent folders exist.
+
+Use `--no-skill` or `--skill-only` to install just one of them, and `--uninstall` to remove both. The skill is a copy, so run `node install.mjs` again after pulling updates.
 
 Then make `TYPESAFE_API_KEY` visible to Claude Code. Either set it as an environment variable before starting Claude Code (for example `setx TYPESAFE_API_KEY "<key>"` on Windows, or an `export` in your shell profile on macOS/Linux), or add it to the `env` block of `~/.claude/settings.json`:
 
@@ -69,9 +76,37 @@ node hook.mjs --dry-run --cwd /path/to/project "what you want to do"
 
 Without a key, the dry run only prints the index and sample questions. With a key, it prints the scores and the exact context it would inject. Every real run also writes `~/.claude/cache/jev-docs/last-run.json` with the area scores, the selected pages, timings and token usage.
 
+## Writing the docs: the create-jev-doc skill
+
+The hook is only as good as the docs it picks from. `create-jev-doc` is an agent skill (Claude Code, Codex and other agents that read `SKILL.md` skills) that writes those docs from the code. Invoke it with `/create-jev-doc` in Claude Code or `$create-jev-doc` in Codex, or just ask the agent to document the repository.
+
+It works in two modes, picked automatically:
+
+- **Create:** when the repository has no docs folder. The agent surveys the code and proposes a set of domains for your approval. It then writes `doc/README.md`, one hub per domain and the pages, one domain at a time, and records progress so a later session can resume.
+- **Update:** when the docs folder exists. The agent finds the source files that changed since the last documented commit and the pages that reference them, then rewrites only the affected passages. It also places new files, fixes links to renamed or deleted ones, and stamps the new commit.
+
+The pages follow a fixed style, described in [`skills/create-jev-doc/references/style.md`](skills/create-jev-doc/references/style.md):
+
+- They state contracts (names, state, ordering, failure behavior, limits) instead of describing code in general terms.
+- They link the files that own each behavior.
+- They say which tests cover what, and never claim a verification nobody ran.
+- Every page is listed in a hub as `- [Title](page.md): what it covers`. That line is exactly what the hook shows Jev.
+
+The skill comes with a dependency-free helper, `skills/create-jev-doc/scripts/doc-coverage.mjs`, which you can also run yourself from any repository:
+
+| Command | What it reports |
+|---|---|
+| `inventory` | Source areas with file and line counts, the docs folder, and the mode (create or update) |
+| `map` | Which pages reference which source files, coverage percentage, and the undocumented files |
+| `changed` | Source changes since the last documented commit: pages to update, new files, broken references |
+| `check` | Broken links, pages no hub lists, folders without a README hub, hub lines without descriptions |
+| `stamp` | Records HEAD as the documented commit in `doc/.jev-doc.json` |
+
+`doc/.jev-doc.json` also accepts an `exclude` list of repository paths (build output, generated reports, fixtures) that should not count as source.
+
 ## Configuration
 
-Environment variables, all optional:
+Environment variables for the hook, all optional:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -115,6 +150,8 @@ It does not send code, tool output, assistant replies or files outside the docs 
 Locally, the hook writes two things under `~/.claude/cache/jev-docs/` (or `JEV_DOCS_CACHE_DIR`): the index cache, and `last-run.json`, which holds the start of the latest prompt (up to 300 characters), the scores and the selected pages. Both stay on your machine. Delete that folder at any time.
 
 The hook reads the key only from the `TYPESAFE_API_KEY` environment variable. It never writes the key to disk or to its logs.
+
+The `create-jev-doc` skill runs in your agent, under your agent's own data policy. Its helper script only reads the repository and git history, and only writes `doc/.jev-doc.json`. It makes no network calls.
 
 ## Development
 

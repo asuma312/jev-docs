@@ -1,7 +1,13 @@
 #!/usr/bin/env node
-// Registers (or removes) the jev-docs hook in Claude Code's user settings.
-//   node install.mjs              add the UserPromptSubmit hook
-//   node install.mjs --uninstall  remove it
+// Installs (or removes) jev-docs for the current user:
+//   - the UserPromptSubmit hook in Claude Code's ~/.claude/settings.json
+//   - the create-jev-doc skill in ~/.claude/skills, plus ~/.agents/skills and
+//     ~/.codex/skills when those agent folders exist
+//
+//   node install.mjs              install both
+//   node install.mjs --no-skill   hook only
+//   node install.mjs --skill-only skill only
+//   node install.mjs --uninstall  remove both
 // A backup of settings.json is written next to it before any change.
 
 import fs from "node:fs";
@@ -9,32 +15,74 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
-const hookPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "hook.mjs").split(path.sep).join("/");
-const command = `node "${hookPath}"`;
-const MARKER = "jev-docs";
-const uninstall = process.argv.includes("--uninstall");
+const repoDir = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const uninstall = args.includes("--uninstall");
+const doHook = !args.includes("--skill-only");
+const doSkill = !args.includes("--no-skill");
 
-let settings = {};
-if (fs.existsSync(settingsPath)) {
-  settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-  fs.copyFileSync(settingsPath, `${settingsPath}.bak-${Date.now()}`);
+// ---------------------------------------------------------------- hook
+
+function updateHook() {
+  const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
+  const hookPath = path.join(repoDir, "hook.mjs").split(path.sep).join("/");
+  const command = `node "${hookPath}"`;
+  const isOurs = (h) => typeof h.command === "string" && h.command.includes("jev-docs") && h.command.includes("hook.mjs");
+
+  let settings = {};
+  if (fs.existsSync(settingsPath)) {
+    settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    fs.copyFileSync(settingsPath, `${settingsPath}.bak-${Date.now()}`);
+  }
+  settings.hooks ??= {};
+  const groups = (settings.hooks.UserPromptSubmit ??= []);
+  // Drop any previous registration so reinstalling from a new path doesn't duplicate it.
+  for (const g of groups) g.hooks = (g.hooks || []).filter((h) => !isOurs(h));
+  settings.hooks.UserPromptSubmit = groups.filter((g) => g.hooks.length);
+  if (!uninstall) settings.hooks.UserPromptSubmit.push({ hooks: [{ type: "command", command, timeout: 20 }] });
+  if (!settings.hooks.UserPromptSubmit.length) delete settings.hooks.UserPromptSubmit;
+  if (!Object.keys(settings.hooks).length) delete settings.hooks;
+
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  console.log(uninstall ? `Removed the hook from ${settingsPath}` : `Hook registered in ${settingsPath}:\n  ${command}`);
+  if (!uninstall && !process.env.TYPESAFE_API_KEY) {
+    console.log("  TYPESAFE_API_KEY is not set in this shell. The hook stays silent until Claude Code can see it.");
+  }
 }
 
-settings.hooks ??= {};
-const groups = (settings.hooks.UserPromptSubmit ??= []);
-const isOurs = (h) => typeof h.command === "string" && h.command.includes(MARKER) && h.command.includes("hook.mjs");
+// ---------------------------------------------------------------- skill
 
-// Drop any previous registration so reinstalling from a new path doesn't duplicate it.
-for (const g of groups) g.hooks = (g.hooks || []).filter((h) => !isOurs(h));
-settings.hooks.UserPromptSubmit = groups.filter((g) => g.hooks.length);
-if (!uninstall) settings.hooks.UserPromptSubmit.push({ hooks: [{ type: "command", command, timeout: 20 }] });
-if (!settings.hooks.UserPromptSubmit.length) delete settings.hooks.UserPromptSubmit;
-if (!Object.keys(settings.hooks).length) delete settings.hooks;
+const SKILL = "create-jev-doc";
 
-fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-console.log(uninstall ? `Removed jev-docs hook from ${settingsPath}` : `Registered in ${settingsPath}:\n  ${command}`);
-if (!uninstall && !process.env.TYPESAFE_API_KEY) {
-  console.log("\nTYPESAFE_API_KEY is not set in this shell. The hook stays silent until Claude Code can see it.");
+function skillTargets() {
+  const home = os.homedir();
+  const targets = [path.join(home, ".claude", "skills")];
+  for (const agentDir of [".agents", ".codex"]) {
+    if (fs.existsSync(path.join(home, agentDir))) targets.push(path.join(home, agentDir, "skills"));
+  }
+  return targets;
 }
+
+function updateSkill() {
+  const source = path.join(repoDir, "skills", SKILL);
+  for (const dir of skillTargets()) {
+    const dest = path.join(dir, SKILL);
+    const ours = fs.existsSync(path.join(dest, "SKILL.md")) && fs.readFileSync(path.join(dest, "SKILL.md"), "utf8").includes(`name: ${SKILL}`);
+    if (fs.existsSync(dest) && !ours) {
+      console.log(`Skipped ${dest}: a different skill already uses that folder.`);
+      continue;
+    }
+    if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+    if (uninstall) {
+      console.log(`Removed the skill from ${dest}`);
+      continue;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.cpSync(source, dest, { recursive: true });
+    console.log(`Skill installed in ${dest}`);
+  }
+}
+
+if (doHook) updateHook();
+if (doSkill) updateSkill();
