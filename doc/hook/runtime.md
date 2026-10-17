@@ -92,4 +92,4 @@ The hook never sets a non-zero exit code and never prints anything other than th
 
 [`test/session.test.mjs`](../../test/session.test.mjs) runs `hook.mjs --reset` and checks that the session's memory is deleted. The successful prompt path, with real Jev answers, deduplication and the output JSON, has no automated test, because it needs the live API.
 
-During development, a real session on a machine at full CPU load recorded about 9.5 seconds between the prompt and the injected context, before this deadline existed. That run is what prompted the deadline and the history file. The suite was run while writing this page: 24 tests, all passing.
+During development, a real session on a machine at full CPU load recorded about 9.5 seconds between the prompt and the injected context, before this deadline existed. That run is what prompted the deadline and the history file. The suite was run while writing this page: 27 tests, all passing.

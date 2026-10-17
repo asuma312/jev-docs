@@ -52,6 +52,9 @@ Temporary folders are not deleted after the run.
 | stage 2 | Only pages in picked areas are asked; the page threshold keeps one page |
 | fallback area | With no area above the threshold, the best area's pages are still asked |
 | abort | An aborted signal rejects `select` while a fake request is pending, in under a second |
+| tiers | Must-read pages are the top page plus pages at or above 0.75, at most three; the rest are optional |
+| render | Must-read and optional pages sit under their own headings; the old "ignore any" wording is gone |
+| gate wording | The gate asks about understanding a part of the project, not routine operations |
 
 [`test/hook.test.mjs`](../../test/hook.test.mjs) runs [`hook.mjs`](../hook/runtime.md) as a child process:
 
@@ -85,4 +88,4 @@ No automated test covers these behaviors. They rest on reading the code and on m
 
 ## Last run
 
-The suite was run while this documentation was written: 24 tests, 24 passing, 0 failing.
+The suite was run while this documentation was written: 27 tests, 27 passing, 0 failing.

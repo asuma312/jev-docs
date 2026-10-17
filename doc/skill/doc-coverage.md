@@ -110,4 +110,4 @@ Every command prints one block of text, or with `--json` one pretty-printed JSON
 - `check`: links in inline code and fenced blocks are ignored, a malformed `50%.md` link is reported without a crash, a link whose text is code still counts for `map`, and the layout verdict passes, then fails once a page sits at the docs root
 - `check` on a flat `docs/` folder with no hub: missing root hub, no domains, two pages outside domains
 
-During development, the script also ran read-only against a repository with about 4,000 source files and 1,400 pages. Each command finished in about 2 seconds. The suite was run while writing this page: 24 tests, all passing.
+During development, the script also ran read-only against a repository with about 4,000 source files and 1,400 pages. Each command finished in about 2 seconds. The suite was run while writing this page: 27 tests, all passing.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { select } = await import("../src/select.mjs");
+const { select, tiers, renderContext, GATE_QUESTION } = await import("../src/select.mjs");
 
 // Stand-ins for the SDK: `noul` builds the same shape, the client answers from a table.
 const noul = (instructions) => ({ type: "noul", instructions });
@@ -72,6 +72,32 @@ test("an aborted signal stops pending requests", async () => {
   const t0 = Date.now();
   await assert.rejects(select(index(3), { request: "x" }, { requests: [] }, { client, noul }, ac.signal), /deadline/);
   assert.ok(Date.now() - t0 < 1000);
+});
+
+test("tiers put high-probability pages first, at most three, and always the top page", () => {
+  const page = (rel, p) => ({ rel, p, summary: rel });
+  const t = tiers([page("a", 0.95), page("b", 0.9), page("c", 0.8), page("d", 0.78), page("e", 0.6)]);
+  assert.deepEqual(t.primary.map((d) => d.rel), ["a", "b", "c"]);
+  assert.deepEqual(t.secondary.map((d) => d.rel), ["d", "e"]);
+  const low = tiers([page("x", 0.6), page("y", 0.55)]);
+  assert.deepEqual(low.primary.map((d) => d.rel), ["x"]);
+  assert.deepEqual(low.secondary.map((d) => d.rel), ["y"]);
+});
+
+test("rendered context separates must-read pages from optional ones", () => {
+  const out = renderContext([{ rel: "a.md", p: 0.9, summary: "A" }, { rel: "b.md", p: 0.6, summary: "B" }], "/p/doc", "/p");
+  const lines = out.split("\n");
+  const must = lines.indexOf("Read these before you start:");
+  const also = lines.findIndex((l) => l.startsWith("Also relevant"));
+  assert.ok(must > 0 && also > must);
+  assert.equal(lines[must + 1], "- doc/a.md — A");
+  assert.equal(lines[also + 1], "- doc/b.md — B");
+  assert.ok(!/ignore any/i.test(out));
+});
+
+test("the gate asks about understanding, not routine operations", () => {
+  assert.match(GATE_QUESTION, /require understanding how some part of this project works/);
+  assert.match(GATE_QUESTION, /committing, pushing, merging/);
 });
 
 test("when no area passes, the single best area is still explored", async () => {

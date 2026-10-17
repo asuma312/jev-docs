@@ -5,12 +5,18 @@
 `jev-docs` is a [Claude Code](https://code.claude.com) hook. Before the agent sees your prompt, it asks [Jev](https://docs.typesafe.ai), TypeSafe's fast decision model, which pages in your project's `doc/`, `docs/` or `documentation/` folder matter for the request. It then adds a short list to the prompt's context. The agent opens two or three relevant pages instead of searching the whole folder or skipping the docs.
 
 ```
-Here are the important documentation files for this request (selected automatically from docs/ by Jev;
-read the ones that apply before starting, and ignore any that don't fit):
+Project documentation for this request, picked from docs/ by jev-docs. These pages describe how the
+parts of the project involved here work; rely on them instead of inferring behavior from the code alone.
+
+Read these before you start:
 - docs/billing/invoices.md — Invoices — generation, numbering, tax rules and PDF rendering. …
 - docs/conventions/money.md — Money handling — decimal types, rounding and currency conversion. …
+
+Also relevant — open them if the task touches what they cover:
 - docs/billing/README.md — Billing — subscriptions, invoices, refunds and payment providers. …
 ```
+
+Routine prompts such as "commit and push" or "is the server up?" get nothing, because they don't need the docs.
 
 The repository also includes **`create-jev-doc`**, an agent skill that writes and maintains that docs folder in the format the hook reads best.
 
@@ -88,11 +94,11 @@ Without a key, the dry run only prints the index and sample questions. With `TYP
 Everything happens in `hook.mjs`, in plain Node code. Jev is called only to answer the questions.
 
 1. **Index.** The hook finds the docs folder and builds one compact entry per Markdown page: path, title, a short description and the `##` section headings. The description comes from, in order: a `description:` field in the page's frontmatter, the text next to a link to the page in a README or index hub (`- [Billing](billing/README.md): subscriptions, invoices…`), or the page's first paragraph. Full page contents are never sent. The index is cached and rebuilt only when a page changes.
-2. **Stage 1: areas.** One Jev request asks a gate question ("does this request depend on knowledge specific to this project?") and one yes/no question per top-level folder of the docs. If the gate fails, for example on small talk, the hook stops here.
+2. **Stage 1: areas.** One Jev request asks a gate question and one yes/no question per top-level folder of the docs. The gate asks whether the task requires *understanding* how part of the project works, as opposed to a routine operation (commit, push, deploy, check status, "continue") or small talk. If the gate fails, the hook stops here.
 3. **Stage 2: pages.** For the best areas (up to 4), the hook asks one yes/no question per page in those areas. The questions travel in one request and Jev evaluates them in parallel. If they don't fit under Jev's 64K-token request limit, they are split into a few requests sent at the same time.
-4. **Select.** Pages with a probability of 0.5 or more are kept, up to 8, highest first.
+4. **Select.** Pages with a probability of 0.5 or more are kept, up to 5, highest first. The top page and any page at 0.75 or more (up to 3) become "read before you start". The rest are listed as optional.
 5. **Only new pages.** Pages already suggested in this session, or already opened by the agent with the Read tool, are dropped. If nothing new is left, nothing is injected.
-6. **Inject.** The remaining pages are added to the prompt's context, phrased as optional reading, so a wrong pick costs little.
+6. **Inject.** The remaining pages are added to the prompt's context. The top pages carry a firm "read these before you start", and the rest are optional. A softer "read the ones that apply, ignore the rest" list turned out to be ignored by agents in almost every turn.
 
 What Jev sees in each request:
 
@@ -113,6 +119,7 @@ A project with about 950 Markdown pages in 24 areas:
 | Add a button to an existing UI screen | 2 | ~10K | ~1.0 s | the screen's data and registry pages |
 | Investigate a failing backend deploy | 3 | ~31K | ~1.1 s | operations, runtime, packaging and deploy pages |
 | "hi, how are you?" | 1 | ~2.7K | ~0.6 s | nothing injected (gate) |
+| "commit, push and deploy" | 1 | ~2.7K | ~0.6 s | nothing injected (gate: routine operation) |
 
 ## Writing the docs: the create-jev-doc skill
 
@@ -157,11 +164,13 @@ Environment variables for the hook, all optional:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JEV_DOCS_MAX` | 8 | Maximum pages injected per prompt |
+| `JEV_DOCS_MAX` | 5 | Maximum pages injected per prompt |
+| `JEV_DOCS_PRIMARY_THRESHOLD` | 0.75 | Minimum probability for a page to be listed as "read before you start" (the top page always is) |
+| `JEV_DOCS_MAX_PRIMARY` | 3 | Maximum "read before you start" pages |
 | `JEV_DOCS_THRESHOLD` | 0.5 | Minimum probability for a page |
 | `JEV_DOCS_GROUP_THRESHOLD` | 0.35 | Minimum probability for an area to be explored |
 | `JEV_DOCS_MAX_GROUPS` | 4 | Maximum areas explored in stage 2 |
-| `JEV_DOCS_GATE_THRESHOLD` | 0.3 | Below this, the prompt is treated as not needing project docs |
+| `JEV_DOCS_GATE_THRESHOLD` | 0.5 | Below this, the prompt is treated as not needing project docs (routine operation or small talk) |
 | `JEV_DOCS_TIMEOUT_MS` | 6000 | Timeout per Jev request attempt |
 | `JEV_DOCS_DEADLINE_MS` | 5000 | Maximum time per prompt, counted from when the hook process starts. Past it, pending requests are aborted and nothing is injected |
 | `JEV_DOCS_MODEL` | SDK default (`jev-latest`) | Jev model to use |

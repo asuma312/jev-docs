@@ -12,11 +12,14 @@ const num = (name, fallback) => {
 };
 
 export const CONFIG = {
-  maxDocs: num("JEV_DOCS_MAX", 8),
+  maxDocs: num("JEV_DOCS_MAX", 5),
   docThreshold: num("JEV_DOCS_THRESHOLD", 0.5),
+  // Pages at or above this go in the "read before you start" list (at most maxPrimary of them).
+  primaryThreshold: num("JEV_DOCS_PRIMARY_THRESHOLD", 0.75),
+  maxPrimary: num("JEV_DOCS_MAX_PRIMARY", 3),
   groupThreshold: num("JEV_DOCS_GROUP_THRESHOLD", 0.35),
   maxGroups: num("JEV_DOCS_MAX_GROUPS", 4),
-  gateThreshold: num("JEV_DOCS_GATE_THRESHOLD", 0.3),
+  gateThreshold: num("JEV_DOCS_GATE_THRESHOLD", 0.5),
   timeoutMs: num("JEV_DOCS_TIMEOUT_MS", 6000),
   // Whole-run budget, counted from process start: past it, pending requests are aborted.
   deadlineMs: num("JEV_DOCS_DEADLINE_MS", 5000),
@@ -25,9 +28,13 @@ export const CONFIG = {
   model: process.env.JEV_DOCS_MODEL || undefined,
 };
 
+// Asks whether the task needs understanding, not just project context: routine operations
+// (commit, push, deploy, status, "continue") are project-specific but gain nothing from docs.
+// On real prompts it scored 0.07–0.37 for routine operations and 0.79–0.93 for real work.
 export const GATE_QUESTION =
-  "Does answering or carrying out `request` depend on knowledge specific to this software project " +
-  "(its code, systems, data, design or processes), rather than being small talk or a general question?";
+  "Does carrying out `request` require understanding how some part of this project works — its behavior, rules, " +
+  "data, architecture or design — rather than being a routine operation such as committing, pushing, merging, " +
+  "deploying, running or stopping something, checking status, or continuing previous work?";
 
 export const groupQuestion = (g) =>
   `Would someone handling \`request\` need to read project documentation from this area? Area: ${g.summary}`;
@@ -93,10 +100,25 @@ export async function select(index, state, log = { requests: [] }, deps, signal)
     .slice(0, CONFIG.maxDocs);
 }
 
+// Splits pages (sorted by p, highest first) into a short must-read list and an optional rest.
+// The top page is always must-read: the gate already established that the task needs the docs.
+export function tiers(selected) {
+  const primary = selected.filter((d, i) => i === 0 || d.p >= CONFIG.primaryThreshold).slice(0, CONFIG.maxPrimary);
+  return { primary, secondary: selected.filter((d) => !primary.includes(d)) };
+}
+
+// A firm instruction for the top pages: in real sessions, an "ignore any that don't fit" list
+// was opened in 2 of 23 turns.
 export function renderContext(selected, docsRoot, projectDir) {
   const base = toPosix(path.relative(projectDir, docsRoot)) || ".";
-  return [
-    `Here are the important documentation files for this request (selected automatically from ${base}/ by Jev; read the ones that apply before starting, and ignore any that don't fit):`,
-    ...selected.map((d) => `- ${base}/${d.rel} — ${clip(d.summary, 200)}`),
-  ].join("\n");
+  const line = (d) => `- ${base}/${d.rel} — ${clip(d.summary, 200)}`;
+  const { primary, secondary } = tiers(selected);
+  const out = [
+    `Project documentation for this request, picked from ${base}/ by jev-docs. These pages describe how the parts of the project involved here work; rely on them instead of inferring behavior from the code alone.`,
+    "",
+    "Read these before you start:",
+    ...primary.map(line),
+  ];
+  if (secondary.length) out.push("", "Also relevant — open them if the task touches what they cover:", ...secondary.map(line));
+  return out.join("\n");
 }

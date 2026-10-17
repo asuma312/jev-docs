@@ -8,11 +8,13 @@
 
 | Field | Variable | Default | Use |
 |---|---|---|---|
-| `maxDocs` | `JEV_DOCS_MAX` | 8 | Cap on returned pages |
+| `maxDocs` | `JEV_DOCS_MAX` | 5 | Cap on returned pages |
 | `docThreshold` | `JEV_DOCS_THRESHOLD` | 0.5 | Minimum page probability |
+| `primaryThreshold` | `JEV_DOCS_PRIMARY_THRESHOLD` | 0.75 | Pages at or above this are listed as must-read |
+| `maxPrimary` | `JEV_DOCS_MAX_PRIMARY` | 3 | Cap on must-read pages |
 | `groupThreshold` | `JEV_DOCS_GROUP_THRESHOLD` | 0.35 | Minimum area probability for stage 2 |
 | `maxGroups` | `JEV_DOCS_MAX_GROUPS` | 4 | Cap on areas explored in stage 2 |
-| `gateThreshold` | `JEV_DOCS_GATE_THRESHOLD` | 0.3 | Below this, stage 2 is skipped |
+| `gateThreshold` | `JEV_DOCS_GATE_THRESHOLD` | 0.5 | Below this, stage 2 is skipped |
 | `timeoutMs` | `JEV_DOCS_TIMEOUT_MS` | 6000 | Per-attempt SDK timeout, in milliseconds |
 | `deadlineMs` | `JEV_DOCS_DEADLINE_MS` | 5000 | Whole-run budget from process start; the hook aborts pending requests past it (see [hook runtime](runtime.md#deadline)) |
 | `requestChars` | `JEV_DOCS_REQUEST_CHARS` | 120000 | Character budget per request, state included |
@@ -28,7 +30,7 @@ Every request goes through the inner `ask(questions)`. It first calls `signal.th
 
 Stage 1 asks these questions, in this order:
 
-- `gate`: `GATE_QUESTION` asks whether `request` depends on knowledge specific to this software project, rather than small talk or a general question.
+- `gate`: `GATE_QUESTION` asks whether carrying out `request` requires understanding how some part of the project works (behavior, rules, data, architecture or design), rather than a routine operation: committing, pushing, merging, deploying, running or stopping something, checking status, or continuing previous work. Routine operations are project-specific but gain nothing from documentation. On real prompts during development, this question scored 0.07–0.37 for routine operations and 0.79–0.93 for real work. The earlier question ("depends on project-specific knowledge?") scored 0.60–0.96 for both, so it let routine prompts through.
 - `g0`…`gN`: one `groupQuestion(g)` per entry in `index.groups`. Each asks whether someone handling `request` would need documentation from that area, and includes the area's summary.
 
 The questions go through the same chunking as stage 2 (see below), so many areas or long area summaries are split across parallel requests instead of exceeding Jev's request limit. The gate is the first entry, so it always travels in the first chunk. With the default budget and typical summaries, this is one request.
@@ -47,7 +49,19 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 
 ## Rendered context
 
-`renderContext(selected, docsRoot, projectDir)` builds the text the hook injects. The first line names the docs folder relative to the project (`.` when they are the same folder) and tells the agent to read the pages that apply and ignore the rest. Then comes one line per page: `- <base>/<rel> — <summary>`, with the summary clipped to 200 characters by `clip`.
+`tiers(selected)` splits the pages, sorted by probability, into two lists:
+
+- `primary`: the top page, plus any page at or above `primaryThreshold`, up to `maxPrimary`. The top page is always must-read, because the gate already established that the task needs documentation.
+- `secondary`: the rest.
+
+`renderContext(selected, docsRoot, projectDir)` builds the text the hook injects. An opening sentence names the docs folder relative to the project (`.` when they are the same folder). It says the pages describe how the involved parts work, and that the agent should rely on them instead of inferring behavior from code alone. Then come two lists:
+
+- **Read these before you start:** the primary pages
+- **Also relevant — open them if the task touches what they cover:** the secondary pages, shown only when there are any
+
+Each page is a line `- <base>/<rel> — <summary>`, with the summary clipped to 200 characters by `clip`.
+
+The wording is deliberately firm for the top pages. In real sessions before this change, the old text ("read the ones that apply… ignore any that don't fit", with up to 8 pages) led the agent to open at least one suggested page in only 2 of 23 turns, and 5 of 71 suggested pages in total.
 
 ## Limits
 
@@ -55,6 +69,8 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 - The gate and area thresholds are absolute. Areas with uniformly low scores fall back to the single best area instead of an empty result.
 - There is no retry budget across chunks: a timeout in one chunk drops every page from that prompt.
 - With the client's `maxRetries: 1`, a single request could take about twice `timeoutMs`, plus backoff, but the hook's deadline (5 s by default) cuts it off first.
+- Firmer wording raises the chance that the agent reads a wrongly picked page too. Reading a page costs little compared with ignoring a right one, but page quality still matters. Folders that aren't contracts (lore, narrative, raw notes) can outrank technical pages for broad prompts, and can be excluded with `.jevdocsignore`.
+- Whether the new gate and wording actually raise the share of suggested pages that agents open has not yet been measured in real sessions.
 
 ## Verification
 
@@ -68,4 +84,6 @@ A page's probability is its answer's `noul`, or 0 if the answer is missing. Page
 - the single best area is explored when no area passes
 - an aborted signal rejects `select` while a fake request is still pending, in well under a second
 
-These tests don't reach the TypeSafe API. Live runs against a project with about 950 pages, made by hand during development, used 2 to 3 requests and took about 1 second per prompt. Those runs are not repeatable from this repository. The suite was run while writing this page: 24 tests, all passing.
+It also checks that `tiers` caps must-read pages at three and always promotes the top page, that `renderContext` puts must-read and optional pages under their own headings without the old "ignore any" wording, and that the gate question asks about understanding rather than routine operations.
+
+These tests don't reach the TypeSafe API. Two live runs with the installed key, against a project with about 950 pages, behaved as intended. "commit, push and deploy" scored 0.22 at the gate and injected nothing. "explain how the sect works" scored 0.92 and injected three must-read and two optional pages, in under a second. These live runs are not repeatable from this repository. The suite was run while writing this page: 27 tests, all passing.

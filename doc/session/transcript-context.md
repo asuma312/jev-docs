@@ -28,4 +28,4 @@ This is the only conversation content the hook sends beyond the current prompt: 
 
 ## Verification
 
-No automated test covers `recentUserMessages`. The behavior above comes from reading the source. The suite was run while writing this page (24 tests, all passing), but none of them exercises this function.
+No automated test covers `recentUserMessages`. The behavior above comes from reading the source. The suite was run while writing this page (27 tests, all passing), but none of them exercises this function.

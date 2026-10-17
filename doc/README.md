@@ -13,4 +13,4 @@ This folder documents how jev-docs works, at the level needed to change it safel
 
 ## Documentation status
 
-All six domains were written from the source at the documented commit recorded in `.jev-doc.json`. The test suite was run while writing (24 tests, all passing). No page here was checked against a live Claude Code session or the live TypeSafe API, except where a page says so.
+All six domains were written from the source at the documented commit recorded in `.jev-doc.json`. The test suite was run while writing (27 tests, all passing). No page here was checked against a live Claude Code session or the live TypeSafe API, except where a page says so.
